@@ -1,5 +1,9 @@
 # Wiki Log
 
+## 2026-08-17
+
+- Added [[session-2026-08-17-desktop-reliability-closeout]] and refreshed [[project-handoff-current-state]], [[index]], `docs/TASKS.md`, `docs/development/ai/task-progress.yaml`, and the reliability plan. Closed APP-001/APP-002/DESK-001, added independent Release startup evidence validation, and left REL-001 open only for future signed/tagged GitHub runner P95 evidence.
+
 ## 2026-08-16
 
 - Added [[session-2026-08-16-large-plan-decomposition-gate]] and a `large-plan-decomposition` context route. Large plans now stop before implementation, present 2-6 ordered slices for user approval, run exactly one approved slice at a time, auto-continue after slice validation, and re-confirm only for material scope, ordering, interface, migration, or risk drift; docs validation locks the contract across AGENTS, execution protocol, plan sources, and context routing.

@@ -1,6 +1,6 @@
 # Desktop 可靠性交付收口实施计划
 
-_状态：in_progress | 更新：2026-08-17 | 关联任务：APP-001、APP-002、DESK-001、REL-001 | 关联证据：[Desktop 功能截图审计](../../omx_wiki/session-2026-08-07-desktop-functional-screenshot-audit.md)_
+_状态：completed | 更新：2026-08-17 | 关联任务：APP-001、APP-002、DESK-001、REL-001 | 关联证据：[Desktop 功能截图审计](../../omx_wiki/session-2026-08-07-desktop-functional-screenshot-audit.md)_
 
 ## 1. 目标、成功标准与停止条件
 
@@ -44,7 +44,7 @@ _状态：in_progress | 更新：2026-08-17 | 关联任务：APP-001、APP-002�
 | S1 | 兼容路由恢复 | Console routes、inventory、tests | 无 | 路由单测、Console build | 回退路由与测试差异 | completed |
 | S2 | Desktop type-check 通过 | Desktop tsconfig、package、最小类型修复 | S1 | type-check、build:main、Vitest | 回退类型项目配置 | completed |
 | S3 | Release P95 工件校验闭环 | release workflow、startup scripts/tests | S2 | Node tests、YAML、workflow contract | 回退 CI/脚本差异 | completed |
-| S4 | 全量验证与证据回写 | Task Board、progress、Wiki | S1-S3 | Console/Desktop/docs/diff gates | 回退文档状态更新 | in_progress |
+| S4 | 全量验证与证据回写 | Task Board、progress、Wiki | S1-S3 | Console/Desktop/docs/diff gates | 回退文档状态更新 | completed |
 
 ## 5. 原则与决策
 
@@ -84,15 +84,16 @@ _状态：in_progress | 更新：2026-08-17 | 关联任务：APP-001、APP-002�
 
 ### S4：验证与回写
 
-- 状态：in_progress
+- 状态：completed
 - 修改范围：`docs/TASKS.md`、`docs/development/ai/task-progress.yaml`、相关 `omx_wiki/` 页面和日志。
 - 步骤：运行目标验证与综合门禁；关闭已证明任务；对正式 runner 才能证明的证据保持准确状态。
 - 切片验收：文档校验、Markdown 链接、`git diff --check` 通过，证据与实际命令一致。
+- 验证证据：Console 路由单测 `13 passed`、企业 Chromium 路由冒烟 `44 passed`、Console lint/build 通过；Desktop `type-check`、`build:main`、全量 `38 files / 324 tests` 通过；启动/Release 契约 `10 passed`；YAML、文档、链接和 diff 门禁通过。
 - 回退点：恢复任务状态，避免误报完成。
 
 ## 7. 偏移控制
 
-- 当前允许修改的切片范围：S4 全量验证、任务状态、机器进度、Wiki 与 Git 交付。
+- 当前允许修改的切片范围：无；计划已完成，REL-001 仅等待正式 Release runner 外部证据。
 - 跨切片共享前置修改：本计划文件。
 - 需要重新确认的变化：新增 API/数据库契约、改变 Release 发布语义、扩大为新 Desktop 功能。
 - 不需要重新确认的变化：切片内部的测试夹具、类型定义和校验脚本细节。
@@ -124,15 +125,15 @@ _状态：in_progress | 更新：2026-08-17 | 关联任务：APP-001、APP-002�
 
 ## 11. 文档同步
 
-- [ ] `TASKS.md` / 上下文
-- [ ] `task-progress.yaml`
-- [ ] 相关 Wiki 交接与日志
-- [ ] Desktop/Release 文档（若行为契约变化）
+- [x] `TASKS.md` / 上下文
+- [x] `task-progress.yaml`
+- [x] 相关 Wiki 交接与日志
+- [x] Desktop/Release 文档（若行为契约变化）
 
 ## 12. 完成定义
 
 - [x] 大型计划已获得用户确认并记录切片版本。
-- [ ] 所有切片验收通过，且过程状态按顺序更新。
-- [ ] 适用测试、构建和冒烟通过。
-- [ ] 契约、文档和长期知识已同步。
-- [ ] 最终证据与剩余外部风险已记录。
+- [x] 所有切片验收通过，且过程状态按顺序更新。
+- [x] 适用测试、构建和冒烟通过。
+- [x] 契约、文档和长期知识已同步。
+- [x] 最终证据与剩余外部风险已记录。

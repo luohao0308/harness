@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-08-16T01:47:50+08:00
+last_updated_at: 2026-08-17T00:43:43+08:00
 last_updated_by: codex-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/development/ai/task-progress.yaml
@@ -4999,6 +4999,30 @@ post_stage_hardening:
       - "The user can approve, merge, split further, reorder, add, or remove slices; after approval, execution auto-continues without per-slice confirmation."
       - "Exactly one slice may be in_progress, and material scope/order/interface/migration/risk changes require a revised decomposition and another confirmation."
       - "The lightweight OPC default remains one branch and one PR for the whole plan; multiple PRs are reserved for independently shippable or risk-isolated slices."
+
+  - id: desktop-reliability-closeout-2026-08-17
+    date: 2026-08-17
+    status: completed_with_external_release_evidence_pending
+    demo: "Desktop reliability closeout restores legacy Console route compatibility, makes strict Desktop type-checking environment-aware, and independently validates the three-platform startup evidence set before GitHub Release creation."
+    verification_result: "routes_types_release_evidence_full_regression_and_documentation_gates_passed_external_runner_p95_pending"
+    verification_commands:
+      - "cd apps/agent-console && npx vitest run src/app/__tests__/routeInventory.test.tsx src/app/__tests__/routes.auth.test.tsx --reporter=dot -> 2 files / 13 tests passed"
+      - "cd apps/agent-console && npx playwright test --project=chromium e2e/sidebar-enterprise.smoke.spec.ts -> 44 passed"
+      - "cd apps/agent-console && npm run lint -- --pretty false && npm run build -> passed; 2414 modules"
+      - "cd apps/desktop-app && npm run type-check -> passed across build/browser/test TypeScript projects"
+      - "cd apps/desktop-app && npm run build:main -> passed"
+      - "cd apps/desktop-app && npm test -- --run -> 38 files / 324 tests passed"
+      - "cd apps/desktop-app && npm run test:startup-budget -> 10 passed"
+      - "cd apps/desktop-app && node --check scripts/startup-budget-lib.mjs scripts/startup-evidence-lib.mjs scripts/validate-startup-budget-artifacts.mjs scripts/release-workflow-contract.test.mjs -> passed"
+      - "ruby -e 'require \"yaml\"; YAML.load_file(\".github/workflows/release.yml\")' -> passed"
+      - "python3 scripts/validate-docs.py -> passed"
+      - "python3 scripts/check-markdown-links.py -> passed"
+      - "git diff --check -> passed"
+    acceptance_notes:
+      - "APP-001 and APP-002 are closed with replace redirects that preserve query/hash state; legacy specialist paths are registered before the dynamic subagent ID route."
+      - "DESK-001 is closed with explicit main-process, browser-adapter, and test TypeScript boundaries while retaining strict mode and checking test fixtures."
+      - "Release CI now validates exactly one five-sample passing report for each expected macOS/Windows/Linux x64 artifact, recomputes aggregate fields, enforces shared app version, and publishes desktop-startup-evidence.json before github-release."
+      - "REL-001 remains open only for real five-sample P95 values from a future signed/tagged GitHub Release runner; no local result is presented as that external evidence."
 
 stage_completion_rule:
   - run_backend_tests

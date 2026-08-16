@@ -1,6 +1,6 @@
 # Task Board
 
-_last-updated: 2026-08-16_
+_last-updated: 2026-08-17_
 
 > **唯一用途**：记录当前进行中、明确待办、阻塞和技术债。稳定事实写入架构/设计文档，详细验证过程写入工作日志（如项目启用）。
 >
@@ -19,8 +19,6 @@ _last-updated: 2026-08-16_
 
 ## 待办 (Todo)
 
-- [ ] APP-001：修复 `/settings/data` 路由、loader 与 API 契约；当前截图审计记录为 404。证据见 [Desktop 功能截图审计](../omx_wiki/session-2026-08-07-desktop-functional-screenshot-audit.md)。
-- [ ] APP-002：修复 `/subagents/specialists` 路由解析或 ID/权限处理；当前审计记录为终态加载失败。证据见 [Desktop 功能截图审计](../omx_wiki/session-2026-08-07-desktop-functional-screenshot-audit.md)。
 - [ ] OPS-001：环境具备时运行 Tempo + Loki 全基础设施验证配置，并记录 trace/log 关联证据；该项不是常规 release-gate hygiene 的前置条件。历史边界见 [归档进度说明](工作日志/archive/task-progress-human.md)。
 
 ## 未授权或未立项 (Do Not Start)
@@ -38,12 +36,15 @@ _last-updated: 2026-08-16_
 - [x] DW-003：将统一文档与 Markdown 链接门禁接入 Docs CI，并由 `validate-docs.py` 锁定 CI 调用契约；证据见 [接入记录](WORKFLOW-ADOPTION.md)。
 - [x] GIT-001：以严格保留历史作者/提交者时间和文件树的方式重排线上功能分支，并建立轻量单维护者 OPC 提交流程；PR #34 已在 14 项检查通过后合并，原功能分支通过精确租约更新到已验证历史，独立归档仍保留原始 tip，证据见 [Git 历史与 OPC 交付记录](../omx_wiki/session-2026-08-16-git-history-opc-delivery.md)。
 - [x] WF-001：建立大型计划自动拆分与用户确认门；AI 在实现前列出 `2-6` 个可验证切片并等待一次确认，确认后单切片连续执行，范围或风险实质变化时重新确认，证据见 [大型计划拆分门记录](../omx_wiki/session-2026-08-16-large-plan-decomposition-gate.md)。
+- [x] APP-001：`/settings/data` 兼容入口已重定向到 `/settings/data-management`，保留 query/hash 并通过路由契约、Chromium 企业冒烟验证。
+- [x] APP-002：`/subagents/specialists` 及详情入口已重定向到专家库权威路径，静态路由优先于动态子代理 ID，Chromium 企业冒烟 `44/44` 通过。
+- [x] DESK-001：Desktop 类型检查已拆分为主进程、浏览器适配器和测试环境，`npm run type-check`、`build:main` 与全量 Desktop 测试通过。
 
 ## 技术债 (Technical Debt)
 
 | 项目 | 风险 | 说明 |
 |---|---|---|
-| DESK-001 | 中 | `cd apps/desktop-app && npm run type-check` 当前会把主进程、浏览器和 Vitest 测试放在同一 TypeScript 环境中检查，暴露 DOM lib 缺失和测试 mock/fixture 类型债；生产 `build:main` 与 `38` 个测试文件、`324` 个测试均通过。需要拆分或校正 Desktop 类型检查配置。证据见 [dev-workflow 接入记录](../omx_wiki/session-2026-08-10-dev-workflow-install-and-docs.md)。 |
+| REL-001 | 中 | 需要后续正式 Release tag 在 macOS/Windows/Linux runner 生成真实五样本 P95 数值；本地契约与独立汇总 gate 已完成，但不能替代外部 runner 证据。 |
 
 ---
 

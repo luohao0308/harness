@@ -1,8 +1,10 @@
 # Wiki Index
 
-> 62 pages | Last updated: 2026-08-16T15:54:07+08:00
+> 63 pages | Last updated: 2026-08-17T00:43:43+08:00
 
 ## session-log
+
+- [Desktop 可靠性交付收口](session-2026-08-17-desktop-reliability-closeout.md) — 关闭旧 Console 路由缺陷，拆分 Desktop 严格 type-check 边界，并在 Release 前独立校验三平台五样本启动证据；真实 runner P95 仍保留为 REL-001 外部证据项。
 
 - [大型计划自动拆分与用户确认门](session-2026-08-16-large-plan-decomposition-gate.md) — 大型计划在实现前自动拆成 2–6 个可验证切片并等待用户确认，确认后单切片连续执行，范围或风险实质变化时重新确认。
 
