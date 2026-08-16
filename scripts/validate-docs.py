@@ -11,6 +11,8 @@ BRIEF_ROUTE_FIXTURES = {
     "": ["project-handoff"],
     "startup context validation evidence": ["agent-startup-context-loop"],
     "agent startup context index": ["agent-startup-context-loop"],
+    "large plan decomposition approval gate": ["large-plan-decomposition"],
+    "大型计划拆分确认": ["large-plan-decomposition"],
     "RAG retrieval and Run Detail grounding": [
         "knowledge-rag-grounding",
         "eval-observability-groundedness",
@@ -97,6 +99,8 @@ REQUIRED_FILES = [
     "docs/development/ai/context-index.json",
     "docs/development/ai/01-task-progress.md",
     "docs/development/ai/task-progress.yaml",
+    "docs/plans/README.md",
+    "docs/plans/TEMPLATE.md",
     "docs/contracts/SPEC-INDEX.md",
     "docs/architecture/MODULE-INDEX.md",
     "omx_wiki/index.md",
@@ -146,6 +150,39 @@ def check_docs_ci_contract() -> None:
     for marker in required_markers:
         if marker not in workflow:
             fail(f"docs CI missing required command: {marker}")
+
+
+def check_large_plan_gate_contract() -> None:
+    required_markers = {
+        "AGENTS.md": [
+            "Harness 大型计划拆分与确认门",
+            "awaiting_user_confirmation",
+            "每次只允许一个切片处于 `in_progress`",
+        ],
+        "docs/development/ai/00-execution-protocol.md": [
+            "## Large Plan Decomposition Gate",
+            "two to six ordered slices",
+            "awaiting_user_confirmation",
+            "exactly one slice `in_progress`",
+        ],
+        "docs/plans/README.md": [
+            "## 大型计划确认门",
+            "`2-6` 个有序",
+            "`awaiting_user_confirmation`",
+        ],
+        "docs/plans/TEMPLATE.md": [
+            "## 4. 规模判定与用户确认",
+            "同一时间最多一个切片为 `in_progress`",
+        ],
+        "docs/development/ai/context-index.json": [
+            '"id": "large-plan-decomposition"',
+        ],
+    }
+    for rel, markers in required_markers.items():
+        text = read_text(ROOT / rel)
+        for marker in markers:
+            if marker not in text:
+                fail(f"large-plan gate missing marker in {rel}: {marker}")
 
 
 def check_no_old_stage_docs() -> None:
@@ -283,6 +320,7 @@ def check_agent_context_contract() -> None:
 
     required_route_ids = {
         "agent-startup-context-loop",
+        "large-plan-decomposition",
         "project-handoff",
         "knowledge-rag-grounding",
         "context-router-memory",
@@ -401,6 +439,7 @@ def check_readme_links() -> None:
 def main() -> None:
     check_required_files()
     check_docs_ci_contract()
+    check_large_plan_gate_contract()
     check_no_old_stage_docs()
     check_no_legacy_doc_dirs()
     check_no_stale_active_doc_markers()

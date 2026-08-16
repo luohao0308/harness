@@ -4981,6 +4981,25 @@ post_stage_hardening:
       - "Backend CI installs the uv.lock dependency graph with uv sync --frozen and runs commands through uv run --frozen, preventing framework drift between local and CI environments."
       - "GitHub push and PR event timestamps are platform events and cannot be backdated; Git author and committer timestamps are preserved exactly."
 
+  - id: large-plan-decomposition-gate-2026-08-16
+    date: 2026-08-16
+    status: completed_large_plan_gate_installed_and_routed
+    demo: "Large plans are classified before implementation, decomposed into 2-6 ordered and independently verifiable slices, shown to the user for one confirmation, then executed with exactly one active slice and material-drift re-confirmation."
+    verification_result: "project_rule_execution_protocol_plan_template_context_route_and_docs_regression_gate_passed"
+    verification_commands:
+      - "python3 scripts/validate-docs.py -> passed, including large-plan contract markers and context route fixture"
+      - "python3 scripts/agent-context-brief.py --task 'large plan decomposition approval gate' -> only large-plan-decomposition matched"
+      - "python3 -m py_compile scripts/validate-docs.py scripts/agent-context-brief.py -> passed"
+      - "python3 scripts/check-markdown-links.py -> passed"
+      - "python3 scripts/test-commit-message-policy.py -> 5 tests passed"
+      - "git diff --check -> passed"
+    acceptance_notes:
+      - "Explicit large roadmaps, multi-stage delivery, and high-risk contract/migration/security/release work always trigger the gate; other work triggers it when at least two documented complexity signals apply."
+      - "Before confirmation the AI may gather read-only evidence and present slices, but may not implement product code, mutate contracts or external state, or create a delivery PR."
+      - "The user can approve, merge, split further, reorder, add, or remove slices; after approval, execution auto-continues without per-slice confirmation."
+      - "Exactly one slice may be in_progress, and material scope/order/interface/migration/risk changes require a revised decomposition and another confirmation."
+      - "The lightweight OPC default remains one branch and one PR for the whole plan; multiple PRs are reserved for independently shippable or risk-isolated slices."
+
 stage_completion_rule:
   - run_backend_tests
   - run_frontend_build
