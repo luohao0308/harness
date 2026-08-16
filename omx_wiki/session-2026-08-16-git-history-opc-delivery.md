@@ -10,12 +10,12 @@ Tags: `git`, `history`, `delivery`, `opc`, `github`, `ci`
 
 ## 结果
 
-- 原始分支 `codex/desktop-team-ai-provider` 保持在 `6796bfed9555ae5f8f09b5c0b26b8ab94330369c`。
-- 只读回退分支 `archive/2026-08-16-codex-desktop-team-ai-provider-before-rewrite` 指向同一原始提交。
+- 原功能分支 `codex/desktop-team-ai-provider` 已通过带精确旧 SHA 租约的 `--force-with-lease`，从 `6796bfed9555ae5f8f09b5c0b26b8ab94330369c` 更新到已验证交付 tip `982f4ae952ae4662627c8b04a1f6a5c68b730585`。
+- 只读回退分支 `archive/2026-08-16-codex-desktop-team-ai-provider-before-rewrite` 继续指向原始提交 `6796bfed9555ae5f8f09b5c0b26b8ab94330369c`。
 - 新交付分支为 `feat/platform-desktop-delivery`。
 - 严格重排后的历史终点为 `b5d04a5cd919e99b5c4432ba837320da71bd9cd3`；新增工作流提交为 `0f7ee3acc7f5dbdaa6f81ec3cd74c2211be9e772`。
-- GitHub PR [#34](https://github.com/luohao0308/harness/pull/34) 已从新交付分支创建到 `main`；实现 head `78f96a9` 的 14 项检查全部通过，等待独立合并决策。
-- `main` 仍为 `fa5425eb20bb8a011d134877009d921c06f4bf1e`；没有强推、删除旧分支、重写 `main` 或合并 PR。
+- GitHub PR [#34](https://github.com/luohao0308/harness/pull/34) 的最终 head `982f4ae` 通过 14/14 项检查后，以 merge commit `fbc29c508ac3f9a904e717f19803d32053c2a663` 合入 `main`，因此严格重排后的提交图没有被 squash。
+- `main` 从原基线 `fa5425eb20bb8a011d134877009d921c06f4bf1e` 通过正常 PR merge 前进；没有强推或重写 `main`，也没有删除任何交付或归档分支。
 
 ## 严格保时边界
 
@@ -49,10 +49,12 @@ GitHub 的分支推送时间、Actions 时间和 PR 创建时间属于平台事�
 - 提交策略测试 5/5 通过，Python 编译、Shell 语法和 GitHub Actions YAML 解析通过。
 - 所有重排后的非 merge 标题和 PR 标题均通过同一校验器。
 - 文档结构校验、Markdown 本地链接校验和新增提交 whitespace 检查通过。
-- 远端四个关键 ref 已核对：`main`、原始分支未变化；归档分支和新交付分支已发布。
+- 合并前远端四个关键 ref 已核对：`main`、原功能分支未变化；归档分支和新交付分支已发布。
 - PR #34 在实现 head `78f96a9` 上的 14 项检查全部通过，包括 backend、frontend、Docker、迁移、文档、提交策略和 whitespace 门禁。
+- PR #34 的最终 head `982f4ae` 再次通过全部 14 项检查，PR 状态在合并前为 `CLEAN` / `MERGEABLE`。
 - Backend CI 通过 `uv sync --frozen` 与 `uv run --frozen` 严格使用 `uv.lock`，避免 FastAPI 等依赖在本地与 CI 间漂移。
+- PR 合并后核对远端 ref：`main` 包含 merge commit `fbc29c5`；原功能分支与交付分支均为 `982f4ae`；归档仍为 `6796bfe`。
 
 ## 后续边界
 
-PR 合并和以 `--force-with-lease` 替换旧分支都属于独立的破坏性/生产 Git 决策。本次不自动执行；默认推荐在 PR 通过后合并新分支，并继续保留归档分支一段观察期，而不是覆盖旧分支。
+PR 合并和原功能分支替换均在明确授权后完成。归档分支继续作为不可变回退引用保留；后续删除归档、交付分支或再次改写远端历史仍属于新的独立决策，不在本次授权范围内。

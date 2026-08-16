@@ -36,7 +36,7 @@ _last-updated: 2026-08-16_
 - [x] DW-001：安装 `dev-workflow v0.2.0` 全部流程包，完成项目画像、文档映射和接入审计；证据见 [WORKFLOW-ADOPTION.md](WORKFLOW-ADOPTION.md)。
 - [x] DW-002：按 dev-workflow 完成全仓文档分类、权威源去重、历史归档、任务审计和全量链接门禁；证据见 [实施计划](plans/documentation-reorganization-2026-08-10.md) 与 [Wiki 会话记录](../omx_wiki/session-2026-08-10-dev-workflow-install-and-docs.md)。
 - [x] DW-003：将统一文档与 Markdown 链接门禁接入 Docs CI，并由 `validate-docs.py` 锁定 CI 调用契约；证据见 [接入记录](WORKFLOW-ADOPTION.md)。
-- [x] GIT-001：以严格保留历史作者/提交者时间和文件树的方式重排线上功能分支，并建立轻量单维护者 OPC 提交流程；新交付分支与归档分支已发布，PR #34 的 14 项检查已全部通过，等待独立合并决策，证据见 [Git 历史与 OPC 交付记录](../omx_wiki/session-2026-08-16-git-history-opc-delivery.md)。
+- [x] GIT-001：以严格保留历史作者/提交者时间和文件树的方式重排线上功能分支，并建立轻量单维护者 OPC 提交流程；PR #34 已在 14 项检查通过后合并，原功能分支通过精确租约更新到已验证历史，独立归档仍保留原始 tip，证据见 [Git 历史与 OPC 交付记录](../omx_wiki/session-2026-08-16-git-history-opc-delivery.md)。
 
 ## 技术债 (Technical Debt)
 
