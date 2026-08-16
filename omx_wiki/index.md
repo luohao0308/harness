@@ -1,8 +1,10 @@
 # Wiki Index
 
-> 61 pages | Last updated: 2026-08-16T01:47:50+08:00
+> 62 pages | Last updated: 2026-08-16T15:54:07+08:00
 
 ## session-log
+
+- [大型计划自动拆分与用户确认门](session-2026-08-16-large-plan-decomposition-gate.md) — 大型计划在实现前自动拆成 2–6 个可验证切片并等待用户确认，确认后单切片连续执行，范围或风险实质变化时重新确认。
 
 - [Git 历史重排与单维护者 OPC 交付](session-2026-08-16-git-history-opc-delivery.md) — 严格保留 107 个历史提交的 tree、作者/提交者时间和拓扑，发布新交付分支与回退归档，并建立无额外依赖的轻量提交、PR 和 CI 标准。
 

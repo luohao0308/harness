@@ -55,7 +55,9 @@ def keyword_matches(needle: str, task_text: str, task_tokens: set[str]) -> bool:
         return False
     keyword_tokens = tokenize(normalized)
     if not keyword_tokens:
-        return False
+        # Chinese and other non-ASCII phrases do not produce ASCII tokens;
+        # match them as normalized phrases instead of silently dropping the route.
+        return normalized in task_text
     if len(keyword_tokens) == 1:
         return keyword_tokens[0] in task_tokens
     return normalized in task_text or all(piece in task_tokens for piece in keyword_tokens)

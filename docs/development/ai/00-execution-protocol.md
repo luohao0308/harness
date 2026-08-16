@@ -43,6 +43,38 @@ module boundaries:
 - Eval Harness remains a first-class module.
 - PostgreSQL remains the production database path.
 
+## Large Plan Decomposition Gate
+
+Classify work as a large plan when the user explicitly asks for a large plan,
+roadmap, or multi-stage delivery; when it changes a high-risk contract,
+migration, security, release, or recovery boundary; or when at least two of
+these signals apply:
+
+- the work crosses two or more module or ownership boundaries;
+- it has three or more ordered implementation phases;
+- it produces multiple independently verifiable outcomes;
+- it cannot reasonably fit in one focused implementation and verification session.
+
+Before implementation, gather only the read-only evidence needed to split the
+work into two to six ordered slices. Present the slices to the user with this
+minimum contract:
+
+| Slice | Outcome | Scope | Depends on | Acceptance | Rollback |
+|---|---|---|---|---|---|
+| S1 |  |  |  |  |  |
+
+Set the plan state to `awaiting_user_confirmation`. The user may approve the
+split or ask to merge, split further, reorder, add, or remove scope. Do not edit
+product code, configuration, contracts, create a delivery PR, or mutate
+external state until the user confirms the decomposition.
+
+After confirmation, persist the plan under `docs/plans/`, mark it `approved`,
+and execute with exactly one slice `in_progress`. Complete the slice acceptance
+checks and record evidence before automatically advancing to the next approved
+slice. Re-confirm only when new evidence materially changes the approved scope,
+ordering, interface, migration, or risk; ordinary implementation detail changes
+do not create another approval round.
+
 ## Stage Completion
 
 Before advancing a stage:

@@ -37,6 +37,7 @@ _last-updated: 2026-08-16_
 - [x] DW-002：按 dev-workflow 完成全仓文档分类、权威源去重、历史归档、任务审计和全量链接门禁；证据见 [实施计划](plans/documentation-reorganization-2026-08-10.md) 与 [Wiki 会话记录](../omx_wiki/session-2026-08-10-dev-workflow-install-and-docs.md)。
 - [x] DW-003：将统一文档与 Markdown 链接门禁接入 Docs CI，并由 `validate-docs.py` 锁定 CI 调用契约；证据见 [接入记录](WORKFLOW-ADOPTION.md)。
 - [x] GIT-001：以严格保留历史作者/提交者时间和文件树的方式重排线上功能分支，并建立轻量单维护者 OPC 提交流程；PR #34 已在 14 项检查通过后合并，原功能分支通过精确租约更新到已验证历史，独立归档仍保留原始 tip，证据见 [Git 历史与 OPC 交付记录](../omx_wiki/session-2026-08-16-git-history-opc-delivery.md)。
+- [x] WF-001：建立大型计划自动拆分与用户确认门；AI 在实现前列出 `2-6` 个可验证切片并等待一次确认，确认后单切片连续执行，范围或风险实质变化时重新确认，证据见 [大型计划拆分门记录](../omx_wiki/session-2026-08-16-large-plan-decomposition-gate.md)。
 
 ## 技术债 (Technical Debt)
 

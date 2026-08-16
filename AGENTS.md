@@ -148,3 +148,12 @@ This repository already has a low-token startup path. New sessions must use it.
 - API、事件、数据库 Schema、迁移、桌面 IPC 或同步协议变化时，按 `docs/contracts/`、`docs/SPEC-INDEX.md` 和对应测试/Runbook 同步；生成 OpenAPI 使用 `python3 scripts/generate-api-docs.py`。
 - 常用验证：API `cd services/api-server && .venv/bin/python -m pytest tests` 与 `.venv/bin/python -m ruff check app tests`；Console `cd apps/agent-console && npm run lint && npm run build`；文档 `python3 scripts/validate-docs.py`；交付前 `git diff --check`。
 - 生产发布、真实第三方凭据、签名/公证、不可逆迁移、强制 Git 操作和删除数据需要明确授权；本地测试和文档审计保持可逆并隔离用户已有改动。
+
+### Harness 大型计划拆分与确认门
+
+- 这是用户指定的项目级流程门，优先于普通任务的自动继续规则；它只适用于大型计划，不为小型、局部、可一次验证的变更增加重复确认；
+- 用户明确提出“大规划”“roadmap”“多阶段计划”，或任务包含高风险契约/迁移/安全/发布改动时，直接按大型计划处理；其他任务若同时出现跨两个以上模块、三个以上顺序阶段、多个独立验收结果、预计无法在一个专注开发会话内完成等至少两个信号，也按大型计划处理；
+- 大型计划在修改产品代码、配置、契约或外部状态前，先做只读证据收集，并自动拆成 `2-6` 个有序、可独立验证的开发切片；
+- 必须向用户列出每个切片的目标结果、修改范围、依赖关系、验收方式和回退点，并把状态标记为 `awaiting_user_confirmation`；用户可以批准原拆分，或要求合并、继续拆分、重排、增删范围；
+- 用户确认前不得开始实现、提交代码、创建交付 PR 或执行外部变更；用户确认后把拆分写入 `docs/plans/`，状态改为 `approved`，每次只允许一个切片处于 `in_progress`；
+- 完成并验证当前切片、更新证据后自动进入下一切片，不需要逐片重复等待；如果新事实实质改变已确认的范围、顺序、接口、迁移或风险，则暂停后续实现，列出修订差异并重新等待确认；一般实现细节调整不触发重新确认。

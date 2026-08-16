@@ -35,6 +35,12 @@ Install the lightweight repository hooks once per clone:
 scripts/install-git-hooks.sh
 ```
 
+## Large Plans
+
+Before implementing a large roadmap, multi-stage delivery, high-risk contract or migration change, or work with multiple independent outcomes, the AI must first decompose it into two to six ordered slices. The user sees each slice outcome, scope, dependency, acceptance check, and rollback point, then approves or adjusts the split. Product implementation and delivery PR creation start only after that confirmation.
+
+After approval, the plan is recorded under `docs/plans/`, exactly one slice is active at a time, and verified slices advance automatically. A new confirmation is required only when evidence materially changes the approved scope, ordering, interface, migration, or risk. The detailed gate is defined in `docs/development/ai/00-execution-protocol.md`.
+
 ## Commit Messages
 
 Commit and PR titles use Conventional Commits:

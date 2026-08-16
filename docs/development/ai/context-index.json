@@ -282,6 +282,39 @@
       ]
     },
     {
+      "id": "large-plan-decomposition",
+      "summary": "Large-plan classification, user-confirmed decomposition, single-slice execution, drift control, and lightweight PR mapping.",
+      "keywords": [
+        "large plan",
+        "big plan",
+        "large roadmap",
+        "multi-stage plan",
+        "plan decomposition",
+        "decomposition approval",
+        "awaiting_user_confirmation",
+        "大型计划",
+        "大规划",
+        "多阶段计划",
+        "计划拆分",
+        "拆分确认"
+      ],
+      "read_first": [
+        "docs/development/ai/00-execution-protocol.md",
+        "docs/plans/README.md",
+        "docs/plans/TEMPLATE.md",
+        "omx_wiki/session-2026-08-16-large-plan-decomposition-gate.md"
+      ],
+      "deep_read": [
+        "docs/development/git-github-workflow.md",
+        "CONTRIBUTING.md"
+      ],
+      "progress_write_targets": [
+        "docs/development/ai/task-progress.yaml",
+        "omx_wiki/session-YYYY-MM-DD-large-plan-*.md",
+        "omx_wiki/log.md"
+      ]
+    },
+    {
       "id": "local-dev-debugging",
       "summary": "Local backend startup, ports, CORS, PostgreSQL/Alembic, Eval dataset migration, and service recovery traps.",
       "keywords": [
