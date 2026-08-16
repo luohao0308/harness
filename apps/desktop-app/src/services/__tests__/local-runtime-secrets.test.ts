@@ -54,14 +54,16 @@ describe('local runtime secret storage', () => {
     const persisted = JSON.parse(fs.readFileSync(path.join(root, 'secrets.json'), 'utf8'))
 
     expect(persisted).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       modelBaseUrl: 'https://provider.example/v1',
       modelName: 'provider-model',
+      modelIds: ['provider-model'],
     })
     expect(bootstrap).toMatchObject({
       model_api_key: 'legacy-key',
       model_base_url: 'https://provider.example/v1',
       model_name: 'provider-model',
+      model_ids: ['provider-model'],
       persistent_secret_storage: true,
     })
   })
@@ -120,6 +122,7 @@ describe('local runtime secret storage', () => {
     const input = {
       baseUrl: 'https://input.example/v1',
       model: 'input-model',
+      models: ['provider-model', 'input-model'],
       apiKey: 'configuration-secret',
     }
 
@@ -134,7 +137,35 @@ describe('local runtime secret storage', () => {
       model_api_key: 'configuration-secret',
       model_base_url: 'https://provider.example/v1',
       model_name: 'provider-model',
+      model_ids: ['provider-model', 'input-model'],
     })
+  })
+
+  test('rejects untrusted model catalogs before calling the local runtime', async () => {
+    mockElectron(true)
+    const secrets = await import('../local-runtime-secrets')
+    const saveModelConfiguration = vi.fn(() => Promise.resolve(modelStatus()))
+    secrets.registerLocalRuntimeSecretHandlers({ saveModelConfiguration })
+    const save = ipcHandlers.get('local-runtime:save-model-configuration')
+
+    await expect(save?.(trustedEvent(), {
+      baseUrl: 'https://provider.example/v1',
+      model: 'provider-model',
+      models: ['other-model'],
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { message: 'model configuration catalog must include the selected model' },
+    })
+    await expect(save?.(trustedEvent(), {
+      baseUrl: 'https://provider.example/v1',
+      model: 'provider-model',
+      models: ['provider-model', 'invalid model'],
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { message: 'model configuration contains an invalid model ID' },
+    })
+    expect(saveModelConfiguration).not.toHaveBeenCalled()
+    expect(fs.existsSync(path.join(root, 'secrets.json'))).toBe(false)
   })
 
   test('does not persist failed saves or unsaved discovery probes', async () => {

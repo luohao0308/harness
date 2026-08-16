@@ -261,6 +261,7 @@ export class LocalRuntimeManager {
       body: JSON.stringify({
         base_url: input.baseUrl,
         model: input.model,
+        ...(input.models ? { models: input.models } : {}),
         ...(Object.prototype.hasOwnProperty.call(input, 'apiKey') ? { api_key: input.apiKey } : {}),
       }),
       redirect: 'error',

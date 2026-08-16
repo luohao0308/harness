@@ -98,6 +98,7 @@ describe('managed local harnessd runtime', () => {
       model_api_key: 'model-secret-value',
       model_base_url: 'https://provider.example/v1',
       model_name: 'deepseek-v4-flash',
+      model_ids: ['deepseek-v4-flash', 'deepseek-v4-pro'],
       persistent_secret_storage: true,
     }
     const { LocalRuntimeManager } = await import('../local-runtime')
@@ -124,6 +125,7 @@ describe('managed local harnessd runtime', () => {
     await expect(manager.saveModelConfiguration({
       baseUrl: 'https://provider.example/v1',
       model: 'deepseek-v4-flash',
+      models: ['deepseek-v4-flash', 'deepseek-v4-pro'],
       apiKey: 'configuration-key',
     })).resolves.toEqual(modelStatus('configured'))
     await expect(manager.discoverModels({
@@ -145,6 +147,7 @@ describe('managed local harnessd runtime', () => {
     expect(stdin).toContain('"model_api_key":"model-secret-value"')
     expect(stdin).toContain('"model_base_url":"https://provider.example/v1"')
     expect(stdin).toContain('"model_name":"deepseek-v4-flash"')
+    expect(stdin).toContain('"model_ids":["deepseek-v4-flash","deepseek-v4-pro"]')
     expect(fetchRuntime).toHaveBeenNthCalledWith(1, endpoint.healthUrl, { redirect: 'error' })
     expect(fetchRuntime).toHaveBeenNthCalledWith(2, new URL('/api/local-runtime/desktop-session', endpoint.origin), expect.objectContaining({
       method: 'POST',
@@ -171,6 +174,7 @@ describe('managed local harnessd runtime', () => {
       body: JSON.stringify({
         base_url: 'https://provider.example/v1',
         model: 'deepseek-v4-flash',
+        models: ['deepseek-v4-flash', 'deepseek-v4-pro'],
         api_key: 'configuration-key',
       }),
     }))
@@ -353,6 +357,7 @@ describe('managed local harnessd runtime', () => {
           model_api_key: 'restart-key',
           model_base_url: 'https://restart.example/v1',
           model_name: 'restart-model',
+          model_ids: ['restart-model', 'restart-model-pro'],
           persistent_secret_storage: true,
         })
       const onEndpoint = vi.fn()
@@ -383,6 +388,7 @@ describe('managed local harnessd runtime', () => {
       expect(bootstrapInputs[1]).toContain('"model_api_key":"restart-key"')
       expect(bootstrapInputs[1]).toContain('"model_base_url":"https://restart.example/v1"')
       expect(bootstrapInputs[1]).toContain('"model_name":"restart-model"')
+      expect(bootstrapInputs[1]).toContain('"model_ids":["restart-model","restart-model-pro"]')
 
       const stop = manager.stop()
       expect(children[1].kill).toHaveBeenCalledWith('SIGTERM')

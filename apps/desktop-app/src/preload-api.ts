@@ -300,6 +300,7 @@ export type LocalRuntimeModelStatus = {
 export type LocalRuntimeModelConfigInput = {
   baseUrl: string
   model: string
+  models?: string[]
   apiKey?: string
 }
 

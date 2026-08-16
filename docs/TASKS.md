@@ -15,6 +15,7 @@ _last-updated: 2026-08-16_
 
 | ID | 任务 | 范围/仓库 | 上下文 | 阻塞 |
 |---|---|---|---|---|
+| DESK-002 | [~] 将 Desktop 模型目录改为检测后持久化的动态 allowlist | Desktop IPC/profile、local runtime、设置页 | [实施计划](plans/desktop-dynamic-model-catalog-2026-08-16.md) | 无 |
 | REL-001 | [~] 在正式 Release CI 获得 macOS/Windows/Linux 真实打包 Desktop 启动五样本 P95 证据 | Desktop packaging、release workflow | [启动性能记录](../omx_wiki/session-2026-07-31-desktop-startup-performance-budget.md) | 本地 native ABI/审批服务不能替代正式 Release CI 证据 |
 
 ## 待办 (Todo)

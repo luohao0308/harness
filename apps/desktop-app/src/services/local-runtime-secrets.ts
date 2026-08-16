@@ -11,11 +11,12 @@ import type {
 import { captureIpcResult } from '../shared/ipc-result'
 
 type PersistedSecrets = {
-  schemaVersion: 2
+  schemaVersion: 3
   vaultKey?: string
   modelApiKey?: string
   modelBaseUrl?: string
   modelName?: string
+  modelIds?: string[]
 }
 
 export type LocalRuntimeSecretStatus = {
@@ -31,10 +32,13 @@ export type LocalRuntimeBootstrapSecrets = {
   model_api_key?: string
   model_base_url?: string
   model_name?: string
+  model_ids?: string[]
   persistent_secret_storage: boolean
 }
 
-const SECRET_SCHEMA_VERSION = 2
+const SECRET_SCHEMA_VERSION = 3
+const MAX_MODEL_CATALOG_SIZE = 300
+const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/
 const sessionSecrets = new Map<'vaultKey' | 'modelApiKey', string>()
 let handlersRegistered = false
 let trustedRuntimeOrigin: string | null = null
@@ -73,11 +77,12 @@ export function setLocalRuntimeModelApiKey(value: string): LocalRuntimeSecretSta
 
 export function persistLocalRuntimeModelConfiguration(
   status: LocalRuntimeModelStatus,
-  input: Pick<LocalRuntimeModelConfigInput, 'apiKey'>,
+  input: Pick<LocalRuntimeModelConfigInput, 'apiKey' | 'models'>,
 ): LocalRuntimeSecretStatus {
   const persisted = readPersistedSecrets()
   persisted.modelBaseUrl = status.base_url
   persisted.modelName = status.model
+  persisted.modelIds = input.models ?? [status.model]
 
   if (Object.prototype.hasOwnProperty.call(input, 'apiKey')) {
     const modelApiKey = input.apiKey?.trim() || ''
@@ -125,6 +130,7 @@ export function createLocalRuntimeBootstrapSecrets(): LocalRuntimeBootstrapSecre
     ...(modelApiKey ? { model_api_key: modelApiKey } : {}),
     ...(persisted.modelBaseUrl ? { model_base_url: persisted.modelBaseUrl } : {}),
     ...(persisted.modelName ? { model_name: persisted.modelName } : {}),
+    ...(persisted.modelIds?.length ? { model_ids: persisted.modelIds } : {}),
     persistent_secret_storage: persistent,
   }
 }
@@ -232,6 +238,7 @@ function readPersistedSecrets(): PersistedSecrets {
       ...(typeof parsed.modelApiKey === 'string' ? { modelApiKey: parsed.modelApiKey } : {}),
       ...(typeof parsed.modelBaseUrl === 'string' ? { modelBaseUrl: parsed.modelBaseUrl } : {}),
       ...(typeof parsed.modelName === 'string' ? { modelName: parsed.modelName } : {}),
+      ...modelIdsFromPersistedProfile(parsed),
     }
   } catch {
     return { schemaVersion: SECRET_SCHEMA_VERSION }
@@ -280,14 +287,56 @@ function validateModelConfigInput(value: unknown): LocalRuntimeModelConfigInput 
   if (!isRecord(value)
     || typeof value.baseUrl !== 'string'
     || typeof value.model !== 'string'
+    || (value.models !== undefined && !Array.isArray(value.models))
     || (value.apiKey !== undefined && typeof value.apiKey !== 'string')) {
     throw new Error('model configuration input is invalid')
   }
+  const model = validateModelId(value.model)
+  const models = value.models === undefined ? undefined : validateModelIds(value.models)
+  if (models && !models.includes(model)) {
+    throw new Error('model configuration catalog must include the selected model')
+  }
   return {
     baseUrl: value.baseUrl,
-    model: value.model,
+    model,
+    ...(models ? { models } : {}),
     ...(value.apiKey !== undefined ? { apiKey: value.apiKey } : {}),
   }
+}
+
+function modelIdsFromPersistedProfile(parsed: Partial<PersistedSecrets>): Pick<PersistedSecrets, 'modelIds'> {
+  try {
+    if (parsed.modelIds !== undefined) {
+      const modelIds = validateModelIds(parsed.modelIds)
+      if (typeof parsed.modelName === 'string' && modelIds.includes(parsed.modelName)) {
+        return { modelIds }
+      }
+    }
+  } catch {
+    // Corrupt or stale catalogs fail closed to the saved selected model.
+  }
+  return typeof parsed.modelName === 'string' && MODEL_ID_PATTERN.test(parsed.modelName)
+    ? { modelIds: [parsed.modelName] }
+    : {}
+}
+
+function validateModelIds(value: unknown[]): string[] {
+  if (value.length === 0 || value.length > MAX_MODEL_CATALOG_SIZE) {
+    throw new Error(`model configuration catalog must contain 1-${MAX_MODEL_CATALOG_SIZE} models`)
+  }
+  const models: string[] = []
+  for (const entry of value) {
+    if (typeof entry !== 'string') throw new Error('model configuration catalog is invalid')
+    const model = validateModelId(entry)
+    if (!models.includes(model)) models.push(model)
+  }
+  return models
+}
+
+function validateModelId(value: string): string {
+  const model = value.trim()
+  if (!MODEL_ID_PATTERN.test(model)) throw new Error('model configuration contains an invalid model ID')
+  return model
 }
 
 function validateModelDiscoveryInput(value: unknown): LocalRuntimeModelDiscoveryInput {
