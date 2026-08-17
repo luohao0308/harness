@@ -101,7 +101,7 @@ jobs:
           cache-dependency-path: |
             apps/agent-console/package-lock.json
             apps/desktop-app/package-lock.json
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - uses: astral-sh/setup-uv@v5
