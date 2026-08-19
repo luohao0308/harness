@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
-  title: 企业级 AI Agent Harness API
-  description: 用于企业级 AI Agent Harness 平台的任务、事件、沙箱、审计和设置 API。
+  title: Forge Harness API
+  description: Forge Harness API：面向企业私有部署的模型、运行、工具、知识、评测和审计控制面。
   version: 0.1.0
 paths:
   /health:
