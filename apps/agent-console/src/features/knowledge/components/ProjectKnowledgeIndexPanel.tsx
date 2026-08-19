@@ -280,8 +280,8 @@ export function ProjectKnowledgeIndexPanel({ agentId }: { agentId: string }) {
       {!desktopReady ? (
         <div className="border-t border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-600">
           {text(
-            "当前可查看索引状态；目录绑定与本机重扫需要在 Harness Desktop 中操作。",
-            "Index status remains visible here; linking and local rescans require Harness Desktop.",
+            "当前可查看索引状态；目录绑定与本机重扫需要在 Forge Harness Desktop 中操作。",
+            "Index status remains visible here; linking and local rescans require Forge Harness Desktop.",
           )}
         </div>
       ) : null}
@@ -310,7 +310,7 @@ export function ProjectKnowledgeIndexPanel({ agentId }: { agentId: string }) {
           <div className="mt-1 text-xs text-slate-500">
             {desktopReady
               ? text("绑定一个本机项目目录后，Desktop 会持续同步可索引文本。", "Link a local project directory to keep indexable text synchronized.")
-              : text("请在 Harness Desktop 中绑定第一个项目目录。", "Link the first project directory in Harness Desktop.")}
+              : text("请在 Forge Harness Desktop 中绑定第一个项目目录。", "Link the first project directory in Forge Harness Desktop.")}
           </div>
         </div>
       ) : null}
@@ -337,8 +337,8 @@ export function ProjectKnowledgeIndexPanel({ agentId }: { agentId: string }) {
         open={bindOpen}
         title={text("绑定项目目录", "Link project directory")}
         description={text(
-          "绝对目录路径只保存在当前 Desktop Profile；纳入索引的文本内容、相对路径、内容哈希和不可逆目录身份会发送到当前 Harness API。",
-          "The absolute directory path stays in the current Desktop Profile. Indexed text, relative paths, content hashes, and an irreversible root identity are sent to the current Harness API.",
+          "绝对目录路径只保存在当前 Desktop Profile；纳入索引的文本内容、相对路径、内容哈希和不可逆目录身份会发送到当前 Forge Harness API。",
+          "The absolute directory path stays in the current Desktop Profile. Indexed text, relative paths, content hashes, and an irreversible root identity are sent to the current Forge Harness API.",
         )}
         onClose={() => {
           if (!createMutation.isPending) setBindOpen(false);

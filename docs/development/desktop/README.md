@@ -1,8 +1,8 @@
-# Harness Desktop Production Guide
+# Forge Harness Desktop Production Guide
 
 ## Status
 
-Harness Desktop is the Electron shell for the AI Harness Platform:
+Forge Harness Desktop is the Electron shell for Forge Harness:
 
 ```text
 Model + Harness = Agent

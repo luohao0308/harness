@@ -115,7 +115,7 @@ d6478b7 Add P7 Knowledge demo seed
 Pull request URL:
 
 ```text
-https://github.com/luohao0308/harness/pull/new/p7-release-demo-hardening
+https://github.com/luohao0308/forge-harness/pull/new/p7-release-demo-hardening
 ```
 
 ## 2026-06-21 Demo Artifact Refresh

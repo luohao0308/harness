@@ -1,5 +1,9 @@
 # Wiki Log
 
+## 2026-08-20
+
+- Completed `BRAND-001` locally: adopted Forge Harness as the public product name, refreshed README, website, Console, Desktop, API/OpenAPI metadata, active product docs, release links, and GitHub release configuration while preserving `HARNESS_*` and `agent-harness` runtime compatibility identifiers. The online repository rename is recorded in the current handoff and verified separately.
+
 ## 2026-08-19
 
 - Completed `DESK-006` in [[session-2026-08-19-desktop-offline-agent]]. Profile-scoped SQLite evidence, restricted workspace tools, mandatory write approval, cancellation/recovery, trusted IPC, deterministic model fallback, idempotent canonical evidence import, full Desktop/Console/Backend/catalog/docs gates, and a local unsigned macOS x64 directory package all passed. `REL-001` remains externally blocked because formal signed macOS/Windows/Linux Release runner evidence is still unavailable.

@@ -51,7 +51,7 @@ describe("LocalRuntimeModelSetupPage", () => {
   it("keeps the browser Web Extension read-only", async () => {
     renderPage();
 
-    expect(await screen.findByText(/Open Harness Desktop/)).toBeInTheDocument();
+    expect(await screen.findByText(/Open Forge Harness Desktop/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Model API key")).not.toBeInTheDocument();
   });
 

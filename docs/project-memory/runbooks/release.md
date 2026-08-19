@@ -34,7 +34,7 @@ sets `HARNESS_DESKTOP_UPDATE_CHANNEL=beta` for the desktop build matrix.
 
 ## Desktop Packaging
 
-`release.yml` builds Harness Desktop on macOS, Windows, and Linux. The desktop
+`release.yml` builds Forge Harness Desktop on macOS, Windows, and Linux. The desktop
 matrix builds the Agent Console renderer, installs `apps/desktop-app`
 dependencies, runs updater/crash/startup contract tests, packages the app, and
 then runs five isolated host-architecture startup samples:

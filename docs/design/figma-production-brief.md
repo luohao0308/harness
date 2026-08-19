@@ -7,7 +7,7 @@
 ## 文件结构
 
 ```text
-Agent Harness Platform
+Forge Harness
 ├─ 00 Design Tokens
 ├─ 01 Website
 │  ├─ Home
@@ -64,7 +64,7 @@ TIMEOUT
 
 ## Website Pages
 
-官网使用 Next.js + TypeScript + Tailwind CSS。官网首屏必须出现产品名 `Enterprise AI Agent Harness Platform` 和正式表述 `生产级企业 AI Agent Harness 平台`。
+官网使用 Next.js + TypeScript + Tailwind CSS。官网首屏必须出现产品名 `Forge Harness` 和正式表述 `Forge Harness：生产级企业 AI 控制面`。
 
 页面：
 

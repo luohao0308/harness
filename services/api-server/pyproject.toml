@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agent-harness-api-server"
 version = "0.1.0"
-description = "FastAPI backend for the Enterprise AI Agent Harness Platform."
+description = "FastAPI backend for the Forge Harness enterprise AI control plane."
 requires-python = "==3.11.*"
 dependencies = [
   "fastapi>=0.115.0,<1.0.0",

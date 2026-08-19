@@ -18036,15 +18036,15 @@ components:
       type: http
 info:
   contact:
-    name: Harness Platform Maintainers
-    url: https://github.com/example/harness
-  description: AI Harness Platform - Model + Harness = Agent. This API powers Agent
-    configuration, Workspace runs, tools, MCP, knowledge, Eval, Observability, RBAC,
-    retention, and deployment operations.
+    name: Forge Harness Maintainers
+    url: https://github.com/luohao0308/forge-harness
+  description: Forge Harness - Model + Harness = Agent. This API powers model configuration,
+    Workspace runs, tools, MCP, knowledge, Eval, Observability, RBAC, retention, and
+    deployment operations.
   license:
     name: MIT
-  summary: AI Harness Platform API
-  title: Harness API
+  summary: Forge Harness API
+  title: Forge Harness API
   version: 0.1.0
 openapi: 3.1.0
 paths:
@@ -21926,8 +21926,8 @@ paths:
       - desktop-sync
   /api/desktop/updates/check:
     get:
-      description: 'Check Harness Desktop update availability for stable or beta release
-        channels.
+      description: 'Check Forge Harness Desktop update availability for stable or
+        beta release channels.
 
 
         The desktop app still downloads signed artifacts from GitHub Releases through

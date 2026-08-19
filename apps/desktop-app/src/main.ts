@@ -115,7 +115,7 @@ if (ownsSingleInstance) app.whenReady().then(async () => {
     powerMonitor.on('resume', () => {
       void localRuntimeManager?.renewDesktopSession().catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error)
-        console.error(`Harness desktop session resume renewal failed: ${message}`)
+        console.error(`Forge Harness desktop session resume renewal failed: ${message}`)
       })
     })
   }
@@ -225,7 +225,7 @@ if (ownsSingleInstance) app.whenReady().then(async () => {
   }
   void recordDesktopStartupReport(startupReport).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error)
-    console.warn(`Harness Desktop startup telemetry failed: ${message}`)
+        console.warn(`Forge Harness Desktop startup telemetry failed: ${message}`)
   })
   if (app.isPackaged) {
     void checkForDesktopUpdates()
@@ -240,7 +240,7 @@ if (ownsSingleInstance) app.whenReady().then(async () => {
   })
 }).catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error)
-  console.error(`Harness Desktop startup failed: ${message}`)
+  console.error(`Forge Harness Desktop startup failed: ${message}`)
   if (isDesktopStartupBudgetMode()) {
     app.exit(1)
   }

@@ -4,7 +4,7 @@
 
 ## Goal
 
-Build the core Agent Workspace Pro route as the primary usage surface for AI Harness Platform by upgrading the existing `/agents/:agentId/workspace` route into a chat-first workspace with clear access to planning and runtime observations.
+Build the core Agent Workspace Pro route as the primary usage surface for Forge Harness by upgrading the existing `/agents/:agentId/workspace` route into a chat-first workspace with clear access to planning and runtime observations.
 
 ## Input
 

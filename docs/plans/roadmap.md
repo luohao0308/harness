@@ -84,7 +84,7 @@ Phase C: 长期可运维
 
 Ship 完 8 个 plan 后，产品对外宣传应该是：
 
-> **AI Harness Platform — 把 Model 变成可配置、可审计、可评估的企业 Agent**
+> **Forge Harness — 把 Model 变成可配置、可审计、可评估的企业 Agent**
 >
 > - 一行 docker-compose 部署到任意 Linux 主机（含 HTTPS / 自动备份 / 健康检查）
 > - 4 步引导：选 LLM → 配模型 → 创 Agent → 跑 Demo，10 分钟完成

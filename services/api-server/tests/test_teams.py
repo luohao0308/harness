@@ -31,7 +31,7 @@ from app.workers.team_runtime_worker import (
 from tests.conftest import AUTH_HEADERS
 
 
-def _create_team(client: TestClient, name: str = "Harness Team") -> dict:
+def _create_team(client: TestClient, name: str = "Forge Harness Team") -> dict:
     response = client.post(
         "/api/teams",
         headers=AUTH_HEADERS,
@@ -52,7 +52,7 @@ def test_team_crud_scopes_to_organization_and_creates_leader(db_session: Session
 
     team = _create_team(client)
 
-    assert team["name"] == "Harness Team"
+    assert team["name"] == "Forge Harness Team"
     assert team["leader_slot_id"] == "leader"
     assert team["workspace_mode"] == "shared"
     assert team["team_tools"] == sorted(team["team_tools"])

@@ -180,7 +180,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
           <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
             <h1 className="text-base font-semibold text-slate-950">Local session unavailable</h1>
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              Reopen this surface from Harness Desktop to establish a same-origin session.
+              Reopen this surface from Forge Harness Desktop to establish a same-origin session.
             </p>
           </div>
         </div>

@@ -1,5 +1,5 @@
 [Unit]
-Description=Agent Harness API Server
+Description=Forge Harness API Server
 After=network-online.target postgresql.service redis.service
 Wants=network-online.target
 

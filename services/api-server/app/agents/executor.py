@@ -49,7 +49,7 @@ SUBAGENT_HEARTBEAT_INTERVAL = 30
 MAX_STEP_OUTPUT_BYTES = 64 * 1024  # 64KB
 SUBAGENT_FAILURE_STATUSES = {"FAILED", "TIMEOUT", "BUDGET_EXCEEDED", "CANCELLED"}
 
-PLANNER_SYSTEM_PROMPT = f"""You are the Planner inside an enterprise AI Agent Harness platform.
+PLANNER_SYSTEM_PROMPT = f"""You are the Planner inside the Forge Harness enterprise AI runtime.
 
 Convert the user goal into a structured execution plan. Return JSON only.
 

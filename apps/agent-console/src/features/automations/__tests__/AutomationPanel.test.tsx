@@ -52,7 +52,7 @@ describe("AutomationPanel", () => {
 
     renderPanel(fetchMock);
     expect(await screen.findByText("暂无自动化")).toBeInTheDocument();
-    expect(screen.getByText("文件与 Git 触发仅在 Harness Desktop 本机运行。" )).toBeInTheDocument();
+    expect(screen.getByText("文件与 Git 触发仅在 Forge Harness Desktop 本机运行。" )).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "新建自动化" }));
     const dialog = screen.getByRole("dialog", { name: "新建自动化" });

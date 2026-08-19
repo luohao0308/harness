@@ -140,7 +140,7 @@ describe("ProjectKnowledgeIndexPanel", () => {
 
     expect(await screen.findByText("Harness 项目")).toBeInTheDocument();
     expect(screen.getByText("有错误")).toBeInTheDocument();
-    expect(screen.getByText("当前可查看索引状态；目录绑定与本机重扫需要在 Harness Desktop 中操作。")).toBeInTheDocument();
+    expect(screen.getByText("当前可查看索引状态；目录绑定与本机重扫需要在 Forge Harness Desktop 中操作。")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "绑定目录" })).not.toBeInTheDocument();
     expect(screen.queryByText("/Users/private/workspace/harness")).not.toBeInTheDocument();
     expect(screen.getByText(`root:${rootIdentity.slice(0, 12)}...`)).toBeInTheDocument();

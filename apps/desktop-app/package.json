@@ -2,8 +2,8 @@
   "name": "@harness/desktop-app",
   "version": "0.1.0",
   "private": true,
-  "description": "Harness Desktop Application - Electron wrapper for agent-console",
-  "author": "Harness Team",
+  "description": "Forge Harness Desktop - Electron workspace for Forge Harness",
+  "author": "Forge Harness Team",
   "main": "dist/main.js",
   "scripts": {
     "dev": "tsx watch src/main.ts",

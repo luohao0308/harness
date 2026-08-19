@@ -2,7 +2,7 @@
 
 `hao` 是 Harness 的本地 Agent CLI，用来在终端里连接 Harness 后端、启动本地 TUI、执行计划和执行任务。
 
-OMX 是工作流、技能和子智能体编排层。`hao` 管理的是 Harness API 凭据、本地会话、宿主机或沙箱工具执行，以及运行审计；它不是浏览器登录入口。
+OMX 是工作流、技能和子智能体编排层。`hao` 管理的是 Forge Harness API 凭据、本地会话、宿主机或沙箱工具执行，以及运行审计；它不是浏览器登录入口。
 
 ## 前置要求
 
@@ -88,7 +88,7 @@ hao --help
 
 ## 登录和状态检查
 
-`hao` 不走浏览器 OAuth 登录流程。它用 Harness API 地址和 bearer token 保存本地配置：
+`hao` 不走浏览器 OAuth 登录流程。它用 Forge Harness API 地址和 bearer token 保存本地配置：
 
 ```bash
 hao login --api-url http://127.0.0.1:8000 --token <token>
@@ -146,7 +146,7 @@ hao resume <session_id>
 
 当前 TUI 采用本地 Agent CLI 的 inline 终端页面：`hao` 不再切到单独的全屏编辑器式 alternate screen，而是在当前 shell 输出流里显示 `hao Code` 欢迎框、主会话和底部 `›` 输入提示。欢迎框按本地 Agent CLI 启动页排成左右两栏，左侧是 `Welcome back!`、图标、模型/计费和当前目录，右侧是 Tips 和 What's new。工具、diff、文件、审批、命令任务、输出、todo 和验证视图不会默认占用右侧分屏；输入 `/tools`、`/diff`、`/tasks`、`/view ...` 等命令时才会打开底部工作台抽屉。`/clear` 会清空当前可见会话并隐藏工作台抽屉。
 
-`hao` 连接本地 Harness API 时会忽略全局 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` 环境代理，避免本机 `127.0.0.1` 请求因为 SOCKS 代理缺少 `socksio` 而失败。
+`hao` 连接本地 Forge Harness API 时会忽略全局 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` 环境代理，避免本机 `127.0.0.1` 请求因为 SOCKS 代理缺少 `socksio` 而失败。
 
 真实终端里的用户输入只依赖终端自身 echo，`hao` 不会再额外打印第二条用户消息；中文等 UTF-8 输入会按字节安全解码，不会因为终端编码边界触发 `UnicodeDecodeError`。如果 stream 返回 401 或 403，TUI 会显示 hao 登录或权限提示，而不是 httpx 的原始 MDN 错误文本。
 

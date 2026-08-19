@@ -166,7 +166,7 @@ export function AutomationPanel({
             {text("用外部事件或本机变化启动智能体运行。", "Start Agent runs from external events or local changes.")}
           </p>
           <p className="mt-1 text-xs text-slate-500">
-            {text("文件与 Git 触发仅在 Harness Desktop 本机运行。", "File and Git triggers run only on this Harness Desktop host.")}
+            {text("文件与 Git 触发仅在 Forge Harness Desktop 本机运行。", "File and Git triggers run only on this Forge Harness Desktop host.")}
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">

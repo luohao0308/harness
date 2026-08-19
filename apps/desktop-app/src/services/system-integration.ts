@@ -12,7 +12,7 @@ import {
 import type { AgentEvent, DesktopRoutePayload, SystemNotificationOptions } from '../preload-api'
 import { ensureSingleInstanceLock } from './app-instance'
 
-const APP_NAME = 'Harness Desktop'
+const APP_NAME = 'Forge Harness Desktop'
 const DEEP_LINK_PROTOCOL = 'agentharness'
 const WAKE_SHORTCUT = 'CommandOrControl+Shift+A'
 const TRAY_ICON_SVG = `

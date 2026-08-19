@@ -53,7 +53,7 @@ export async function createHarnessWindow(
     y: state?.y,
     minWidth: config.window.minWidth,
     minHeight: config.window.minHeight,
-    title: options.kind === 'run' && options.runId ? `Harness Run ${options.runId}` : 'Harness Desktop',
+    title: options.kind === 'run' && options.runId ? `Forge Harness Run ${options.runId}` : 'Forge Harness Desktop',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,

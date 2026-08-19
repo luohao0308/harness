@@ -151,7 +151,7 @@ function buildSuccessStreamBody(): string {
     sseFrame("tool_call_result", {
       tool_call_id: "tc-001",
       tool_name: "read_file",
-      output_json: { content: "# AI Harness Platform" },
+      output_json: { content: "# Forge Harness" },
       output_summary: "File content returned",
       status: "COMPLETED",
       duration_ms: 42,
@@ -165,7 +165,7 @@ function buildSuccessStreamBody(): string {
       name: "readme-summary.md",
       artifact_type: "text",
       status: "created",
-      content: "# Summary\nThe project is an AI Harness Platform.",
+      content: "# Summary\nThe project is Forge Harness.",
       run_id: STABLE_RUN_ID,
     }),
   );

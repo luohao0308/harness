@@ -79,9 +79,9 @@ def main() -> None:
     for target in yaml_targets:
         target.write_text(yaml_payload, encoding="utf-8")
     lines = [
-        "# Harness API Reference",
+        "# Forge Harness API Reference",
         "",
-        f"Title: {schema.get('info', {}).get('title', 'Harness API')}",
+        f"Title: {schema.get('info', {}).get('title', 'Forge Harness API')}",
         f"Version: {schema.get('info', {}).get('version', 'unknown')}",
         "",
         "Generated from FastAPI OpenAPI metadata.",
