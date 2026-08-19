@@ -36,7 +36,7 @@ const autoUpdater = {
   channel: 'stable',
   logger: null as unknown,
   checkForUpdates: vi.fn(async () => ({ updateInfo: { version: '0.2.0' } })),
-  downloadUpdate: vi.fn(async () => ['Harness Desktop-0.2.0.blockmap']),
+  downloadUpdate: vi.fn(async () => ['Forge Harness Desktop-0.2.0.blockmap']),
   on: vi.fn((event: string, callback: (...args: any[]) => void) => {
     updaterEvents.set(event, callback)
   }),
@@ -94,9 +94,9 @@ describe('desktop updates', () => {
       latest_version: '0.2.0',
       platform: 'darwin',
       arch: 'arm64',
-      release_url: 'https://github.com/luohao0308/harness/releases/tag/v0.2.0',
-      feed_url: 'https://github.com/luohao0308/harness/releases/download/v0.2.0',
-      metadata_url: 'https://github.com/luohao0308/harness/releases/download/v0.2.0/latest-mac.yml',
+      release_url: 'https://github.com/luohao0308/forge-harness/releases/tag/v0.2.0',
+      feed_url: 'https://github.com/luohao0308/forge-harness/releases/download/v0.2.0',
+      metadata_url: 'https://github.com/luohao0308/forge-harness/releases/download/v0.2.0/latest-mac.yml',
       checked_at: '2026-06-26T00:00:00Z',
     })
     const { checkForDesktopUpdates } = await import('../services/desktop-updates')
@@ -106,7 +106,7 @@ describe('desktop updates', () => {
     expect(apiRequest).toHaveBeenCalledWith(expect.stringContaining('/api/desktop/updates/check?'))
     expect(autoUpdater.setFeedURL).toHaveBeenCalledWith({
       provider: 'generic',
-      url: 'https://github.com/luohao0308/harness/releases/download/v0.2.0',
+      url: 'https://github.com/luohao0308/forge-harness/releases/download/v0.2.0',
       channel: 'stable',
     })
     expect(autoUpdater.checkForUpdates).toHaveBeenCalled()
@@ -128,7 +128,7 @@ describe('desktop updates', () => {
       latest_version: '0.2.0',
       platform: 'darwin',
       arch: 'arm64',
-      release_url: 'https://github.com/luohao0308/harness/releases/tag/v0.2.0',
+      release_url: 'https://github.com/luohao0308/forge-harness/releases/tag/v0.2.0',
       feed_url: 'http://updates.example.test/v0.2.0',
       metadata_url: 'http://updates.example.test/v0.2.0/latest-mac.yml',
       checked_at: '2026-06-26T00:00:00Z',
@@ -153,9 +153,9 @@ describe('desktop updates', () => {
       latest_version: '0.2.0',
       platform: 'linux',
       arch: 'x64',
-      release_url: 'https://github.com/luohao0308/harness/releases/tag/v0.2.0',
-      feed_url: 'https://github.com/luohao0308/harness/releases/download/v0.2.0',
-      metadata_url: 'https://github.com/luohao0308/harness/releases/download/v0.2.0/latest-linux.yml',
+      release_url: 'https://github.com/luohao0308/forge-harness/releases/tag/v0.2.0',
+      feed_url: 'https://github.com/luohao0308/forge-harness/releases/download/v0.2.0',
+      metadata_url: 'https://github.com/luohao0308/forge-harness/releases/download/v0.2.0/latest-linux.yml',
       checked_at: '2026-06-26T00:00:00Z',
     })
     electronState.version = '0.2.0'
@@ -213,9 +213,9 @@ describe('desktop updates', () => {
       latest_version: '0.2.0',
       platform: 'darwin',
       arch: 'arm64',
-      release_url: 'https://github.com/luohao0308/harness/releases/tag/v0.2.0',
-      feed_url: 'https://github.com/luohao0308/harness/releases/download/v0.2.0',
-      metadata_url: 'https://github.com/luohao0308/harness/releases/download/v0.2.0/latest-mac.yml',
+      release_url: 'https://github.com/luohao0308/forge-harness/releases/tag/v0.2.0',
+      feed_url: 'https://github.com/luohao0308/forge-harness/releases/download/v0.2.0',
+      metadata_url: 'https://github.com/luohao0308/forge-harness/releases/download/v0.2.0/latest-mac.yml',
       checked_at: '2026-06-26T00:00:00Z',
     })
     const { checkForDesktopUpdates } = await import('../services/desktop-updates')

@@ -5,10 +5,12 @@ Low-token entry point. Read this, then run the brief for your task.
 ## Project Identity
 
 ```text
+Forge Harness
+
 Model + Harness = Agent
 ```
 
-AI Harness Platform — production agent infrastructure: model config, tools, MCP,
+Forge Harness — private enterprise AI infrastructure: model config, tools, MCP,
 sandbox policy, planning, execution, event sourcing, eval, observability, warmpool,
 knowledge grounding, context routing. Not a generic chatbot.
 

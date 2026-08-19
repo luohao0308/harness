@@ -351,7 +351,7 @@
   - `hao` CLI 默认使用 Rich terminal loop 保持在当前 shell 输出流；Textual 组件只作为内部/后备实现面，不应作为默认全屏编辑器式界面。
   - `hao` CLI 的 `/compact` 与 `/compress` 是同一压缩入口；状态区用 `○/◔/◑/◕/◉/●` 表示本地 active-path compact 比例，不伪造真实 token 成本。
   - `hao` CLI 的真实终端输入依赖终端 echo，不额外重复打印用户消息；UTF-8 输入按字节安全解码，stream 401/403 失败显示 hao 自己的认证/权限提示。
-  - `hao` 本地 API client 应忽略环境代理配置，保证 localhost Harness API 不被全局 SOCKS/HTTP 代理污染。
+  - `hao` 本地 API client 应忽略环境代理配置，保证 localhost Forge Harness API 不被全局 SOCKS/HTTP 代理污染。
 - Design-token constraints:
   - 继续沿用现有 `slate / emerald / amber / cyan / red` 语义色。
 - Performance constraints:

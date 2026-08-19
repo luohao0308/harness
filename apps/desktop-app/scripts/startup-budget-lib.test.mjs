@@ -41,7 +41,7 @@ function sample(totalMs) {
 
 test('aggregates multiple samples and fails an exceeded P95 budget', () => {
   const report = aggregateStartupSamples({
-    executablePath: '/workspace/release/mac/Harness Desktop',
+    executablePath: '/workspace/release/mac/Forge Harness Desktop',
     appRoot: '/workspace',
     samples: [sample(2_000), sample(2_500), sample(6_500)],
     generatedAt: new Date('2026-07-31T00:00:00.000Z'),
@@ -75,8 +75,8 @@ test('selects the host architecture before fallback package directories', () => 
       releaseRoot: '/release',
     }),
     [
-      '/release/mac-arm64/Harness Desktop.app/Contents/MacOS/Harness Desktop',
-      '/release/mac/Harness Desktop.app/Contents/MacOS/Harness Desktop',
+      '/release/mac-arm64/Forge Harness Desktop.app/Contents/MacOS/Forge Harness Desktop',
+      '/release/mac/Forge Harness Desktop.app/Contents/MacOS/Forge Harness Desktop',
     ],
   )
 })
@@ -117,7 +117,7 @@ test('rejects sample sets that do not use identical budgets', () => {
 
   assert.throws(
     () => aggregateStartupSamples({
-      executablePath: '/workspace/release/mac/Harness Desktop',
+      executablePath: '/workspace/release/mac/Forge Harness Desktop',
       appRoot: '/workspace',
       samples: [sample(2_000), changedBudgetSample],
     }),

@@ -1,4 +1,4 @@
-# 01 Figma 设计工作流
+# 01 Forge Harness Figma 设计工作流
 
 本文件定义 Figma 在项目中的执行顺序、设计产物和交付规则。Figma 阶段在仓库脚手架和代码实现之前完成。
 
@@ -18,7 +18,7 @@ docs/design/
 ## Figma 文件结构
 
 ```text
-Agent Harness Platform
+Forge Harness
 ├─ 00 Design Tokens
 ├─ 01 Website
 │  ├─ Home

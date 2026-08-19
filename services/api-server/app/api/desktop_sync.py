@@ -258,7 +258,7 @@ def check_desktop_updates(
     arch: Annotated[str, Query(description="Electron process.arch value")] = "x64",
 ) -> DesktopUpdateCheckResponse:
     """
-    Check Harness Desktop update availability for stable or beta release channels.
+    Check Forge Harness Desktop update availability for stable or beta release channels.
 
     The desktop app still downloads signed artifacts from GitHub Releases through
     electron-updater metadata. This endpoint is the backend policy gate that

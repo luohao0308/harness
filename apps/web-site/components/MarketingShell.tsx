@@ -10,9 +10,9 @@ export function Logo() {
       <div className="w-6 h-6 rounded bg-slate-900 flex items-center justify-center">
         <div className="w-2.5 h-2.5 border border-white border-r-0 border-b-0" />
       </div>
-      <span className="text-slate-900 tracking-tight">Harness</span>
+      <span className="text-slate-900 tracking-tight">Forge Harness</span>
       <span className="text-slate-400 text-[12px] border-l border-slate-200 pl-2 hidden sm:inline">
-        Enterprise
+        Control Plane
       </span>
     </div>
   );
@@ -89,7 +89,7 @@ export function MarketingShell({
           <div className="col-span-2">
             <Logo />
             <p className="mt-3 text-slate-500 leading-relaxed max-w-sm">
-              生产级企业 AI Agent Harness 平台。Model 提供推理，Harness 提供可靠性。
+              Forge Harness 是面向企业私有部署的 AI 控制面。Model 提供推理，Harness 提供可靠性。
             </p>
           </div>
           <div>
@@ -119,7 +119,7 @@ export function MarketingShell({
           </div>
         </div>
         <div className="border-t border-slate-100 py-4 text-center text-[11px] text-slate-400">
-          © 2026 Harness Systems · Production-grade harness layer for enterprise AI agents
+          © 2026 Forge Harness · Production-grade control plane for enterprise AI
         </div>
       </footer>
     </div>

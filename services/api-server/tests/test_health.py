@@ -15,7 +15,7 @@ def test_health_returns_ok() -> None:
 def test_openapi_schema_generates() -> None:
     schema = app.openapi()
 
-    assert schema["info"]["title"] == "Harness API"
-    assert schema["info"]["summary"] == "AI Harness Platform API"
+    assert schema["info"]["title"] == "Forge Harness API"
+    assert schema["info"]["summary"] == "Forge Harness API"
     assert "Model + Harness = Agent" in schema["info"]["description"]
     assert "/health" in schema["paths"]

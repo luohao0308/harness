@@ -350,8 +350,8 @@ export function ModelSettingsPage() {
     if (isLocalRuntimeProfile() && !isLocalModelProvider(normalized)) {
       if (isLocalWebExtension()) {
         setSaveMessage(text(
-          "Web Extension 只能查看模型状态；请在 Harness Desktop 中替换 API Key。",
-          "The Web Extension can only inspect model status. Replace the API key in Harness Desktop.",
+          "Web Extension 只能查看模型状态；请在 Forge Harness Desktop 中替换 API Key。",
+          "The Web Extension can only inspect model status. Replace the API key in Forge Harness Desktop.",
         ));
         return;
       }

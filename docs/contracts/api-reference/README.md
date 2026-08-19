@@ -1,6 +1,6 @@
-# Harness API Reference
+# Forge Harness API Reference
 
-Title: Harness API
+Title: Forge Harness API
 Version: 0.1.0
 
 Generated from FastAPI OpenAPI metadata.

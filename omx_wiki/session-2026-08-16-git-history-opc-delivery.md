@@ -14,7 +14,7 @@ Tags: `git`, `history`, `delivery`, `opc`, `github`, `ci`
 - 只读回退分支 `archive/2026-08-16-codex-desktop-team-ai-provider-before-rewrite` 继续指向原始提交 `6796bfed9555ae5f8f09b5c0b26b8ab94330369c`。
 - 新交付分支为 `feat/platform-desktop-delivery`。
 - 严格重排后的历史终点为 `b5d04a5cd919e99b5c4432ba837320da71bd9cd3`；新增工作流提交为 `0f7ee3acc7f5dbdaa6f81ec3cd74c2211be9e772`。
-- GitHub PR [#34](https://github.com/luohao0308/harness/pull/34) 的最终 head `982f4ae` 通过 14/14 项检查后，以 merge commit `fbc29c508ac3f9a904e717f19803d32053c2a663` 合入 `main`，因此严格重排后的提交图没有被 squash。
+- GitHub PR [#34](https://github.com/luohao0308/forge-harness/pull/34) 的最终 head `982f4ae` 通过 14/14 项检查后，以 merge commit `fbc29c508ac3f9a904e717f19803d32053c2a663` 合入 `main`，因此严格重排后的提交图没有被 squash。
 - `main` 从原基线 `fa5425eb20bb8a011d134877009d921c06f4bf1e` 通过正常 PR merge 前进；没有强推或重写 `main`，也没有删除任何交付或归档分支。
 
 ## 严格保时边界

@@ -220,7 +220,7 @@ describe("SSO Login Accessibility", () => {
 
     await waitFor(() => {
       const heading = screen.getByRole("heading", { level: 1 });
-      expect(heading).toHaveTextContent(/登录 Harness Console/i);
+      expect(heading).toHaveTextContent(/登录 Forge Harness Console/i);
     });
   });
 });

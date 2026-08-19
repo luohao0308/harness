@@ -6,7 +6,7 @@ _来源：代码、配置、CI、产品规格和已记录验证证据 | 状态�
 
 ## 1. 项目概览
 
-Harness 是一个私有部署的企业 AI Harness Platform，把基础模型包装成可配置、可审计、可评估的 Agent 运行系统。核心链路为 `Agent Studio → Agent Workspace → Planner/Executor → Tool/MCP/Knowledge/Sandbox → Events/Replay/Eval/Observability`。
+Forge Harness 是一个私有部署的企业 AI 控制面，把基础模型包装成可配置、可审计、可评估的 Agent 运行系统。Harness 是产品中的工程可靠性层；核心链路为 `Agent Studio → Agent Workspace → Planner/Executor → Tool/MCP/Knowledge/Sandbox → Events/Replay/Eval/Observability`。
 
 公共网站只承担产品信息和演示；业务控制面是 `apps/agent-console` 与 `services/api-server`。当前 Desktop 还提供 Electron 本地工作区与本地运行时。Kubernetes、完整 SaaS 商业化和生产凭据不属于本地开发默认范围。
 

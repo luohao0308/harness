@@ -24600,15 +24600,15 @@
   },
   "info": {
     "contact": {
-      "name": "Harness Platform Maintainers",
-      "url": "https://github.com/example/harness"
+      "name": "Forge Harness Maintainers",
+      "url": "https://github.com/luohao0308/forge-harness"
     },
-    "description": "AI Harness Platform - Model + Harness = Agent. This API powers Agent configuration, Workspace runs, tools, MCP, knowledge, Eval, Observability, RBAC, retention, and deployment operations.",
+    "description": "Forge Harness - Model + Harness = Agent. This API powers model configuration, Workspace runs, tools, MCP, knowledge, Eval, Observability, RBAC, retention, and deployment operations.",
     "license": {
       "name": "MIT"
     },
-    "summary": "AI Harness Platform API",
-    "title": "Harness API",
+    "summary": "Forge Harness API",
+    "title": "Forge Harness API",
     "version": "0.1.0"
   },
   "openapi": "3.1.0",
@@ -30339,7 +30339,7 @@
     },
     "/api/desktop/updates/check": {
       "get": {
-        "description": "Check Harness Desktop update availability for stable or beta release channels.\n\nThe desktop app still downloads signed artifacts from GitHub Releases through\nelectron-updater metadata. This endpoint is the backend policy gate that\nselects the channel/version and returns the metadata feed URL for the client.",
+        "description": "Check Forge Harness Desktop update availability for stable or beta release channels.\n\nThe desktop app still downloads signed artifacts from GitHub Releases through\nelectron-updater metadata. This endpoint is the backend policy gate that\nselects the channel/version and returns the metadata feed URL for the client.",
         "operationId": "check_desktop_updates_api_desktop_updates_check_get",
         "parameters": [
           {

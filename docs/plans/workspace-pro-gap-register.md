@@ -1,6 +1,6 @@
 # Workspace Pro Gap Register
 
-This register tracks the difference between the completed AI Harness Platform vertical slice and the full canonical Workspace Pro specification.
+This register tracks the difference between the completed Forge Harness vertical slice and the full canonical Workspace Pro specification.
 
 ## Status Rule
 

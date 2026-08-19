@@ -479,7 +479,7 @@ export class LocalRuntimeManager {
       void this.renewDesktopSession().catch((error: unknown) => {
         if (this.stopping || generation !== this.desktopSessionGeneration) return
         const message = error instanceof Error ? error.message : String(error)
-        console.error(`Harness desktop session renewal failed: ${message}`)
+        console.error(`Forge Harness desktop session renewal failed: ${message}`)
         this.scheduleDesktopSessionRenewal(generation, this.options.desktopSessionRetryMs)
       })
     }, Math.max(1, delayMs))

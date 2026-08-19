@@ -13,17 +13,17 @@ export function packagedExecutableCandidates({ platform, arch, releaseRoot }) {
     return directories.map((directory) => path.join(
       releaseRoot,
       directory,
-      'Harness Desktop.app',
+      'Forge Harness Desktop.app',
       'Contents',
       'MacOS',
-      'Harness Desktop',
+      'Forge Harness Desktop',
     ))
   }
   if (platform === 'win32') {
     const directories = arch === 'arm64'
       ? ['win-arm64-unpacked', 'win-unpacked']
       : ['win-unpacked', 'win-x64-unpacked']
-    return directories.map((directory) => path.join(releaseRoot, directory, 'Harness Desktop.exe'))
+    return directories.map((directory) => path.join(releaseRoot, directory, 'Forge Harness Desktop.exe'))
   }
   const directories = arch === 'arm64'
     ? ['linux-arm64-unpacked', 'linux-unpacked']

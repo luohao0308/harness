@@ -2,7 +2,7 @@
 
 ## Objective
 
-Record a portfolio demo that proves the project is a Production Agent Harness Platform rather than a static chat UI.
+Record a portfolio demo that proves Forge Harness is a production AI control plane rather than a static chat UI.
 
 ## Recording Segments
 

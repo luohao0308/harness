@@ -1,6 +1,6 @@
-# Harness Desktop App
+# Forge Harness Desktop App
 
-Electron desktop shell for the AI Harness Platform. Product, design, release,
+Electron desktop shell for Forge Harness. Product, design, release,
 and support guidance lives in:
 
 - `docs/development/desktop/README.md`

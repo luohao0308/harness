@@ -1,5 +1,5 @@
 [Unit]
-Description=Agent Harness Agent Assignment Worker
+Description=Forge Harness Assignment Worker
 After=network-online.target postgresql.service redis.service
 Wants=network-online.target
 

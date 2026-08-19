@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Harness Enterprise AI Agent Platform",
-  description: "生产级企业 AI Agent Harness 平台官网。",
+  title: "Forge Harness | Enterprise AI Control Plane",
+  description: "Forge Harness 是面向企业私有部署的 AI 控制面，提供模型、知识、工具、策略、评测和可观测运行能力。",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

@@ -1,6 +1,6 @@
 # AI Execution Docs
 
-This directory is the machine-readable execution contract for AI Harness Platform.
+This directory is the machine-readable execution contract for Forge Harness.
 
 ## Product Contract
 

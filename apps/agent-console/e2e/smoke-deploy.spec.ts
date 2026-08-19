@@ -5,7 +5,7 @@ test("deployed stack exposes auth entry and console shell", async ({ page }) => 
   await expect(page.locator("body")).toBeVisible();
 
   await page.goto("/login");
-  await expect(page.getByRole("heading", { name: "登录 Harness Console" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "登录 Forge Harness Console" })).toBeVisible();
 
   await page.goto("/register");
   await expect(page.getByRole("heading", { name: "创建 Harness 工作区" })).toBeVisible();

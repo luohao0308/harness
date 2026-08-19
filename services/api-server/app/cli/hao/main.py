@@ -344,12 +344,12 @@ def _add_common_run_args(
     parser.add_argument(
         "--api-url",
         default=arg_default(None),
-        help="Override Harness API URL",
+        help="Override Forge Harness API URL",
     )
     parser.add_argument(
         "--token",
         default=arg_default(None),
-        help="Override Harness API bearer token",
+        help="Override Forge Harness API bearer token",
     )
 
 

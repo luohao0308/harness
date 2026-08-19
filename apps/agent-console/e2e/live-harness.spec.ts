@@ -3,7 +3,7 @@
  *
  * These tests run against a REAL backend (no Playwright route mocks).
  * They require:
- *   - Harness API running on http://127.0.0.1:8000
+ *   - Forge Harness API running on http://127.0.0.1:8000
  *   - Agent Console on http://127.0.0.1:5177
  *   - HARNESS_E2E_RUN_ID env var (from canonical backend smoke evidence)
  *

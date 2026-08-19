@@ -4,7 +4,7 @@ last_updated_at: 2026-08-16T01:47:50+08:00
 last_updated_by: codex-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/development/ai/task-progress.yaml
-product: AI Harness Platform
+product: Forge Harness
 formula: Model + Harness = Agent
 website_policy: retained_public_shell_not_console_core
 
@@ -117,6 +117,22 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: brand-rename-forge-harness
+    date: 2026-08-20
+    status: completed
+    demo: Forge Harness is the public product name across the repository, website, Console, Desktop, API metadata, and release configuration; the GitHub repository is luohao0308/forge-harness.
+    verification_result: local_branding_docs_api_and_repository_rename_verified
+    verification_commands:
+      - python3 scripts/generate-api-docs.py
+      - python3 scripts/validate-docs.py
+      - git diff --check
+      - gh repo view luohao0308/forge-harness --json nameWithOwner,url,description
+      - git remote -v
+    acceptance_notes:
+      - Public-facing copy uses Forge Harness while Model + Harness = Agent remains the architecture formula.
+      - HARNESS_* environment variables, agent-harness package/runtime identifiers, service names, and protocol headers remain compatible identifiers.
+      - README, active product docs, website metadata, Console title, Desktop product name, API/OpenAPI metadata, and GitHub release links were refreshed.
+      - GitHub renamed the online repository from luohao0308/harness to luohao0308/forge-harness and keeps the old URL redirect.
   - id: platform-managed-ai-provider-integration
     date: 2026-07-31
     status: completed

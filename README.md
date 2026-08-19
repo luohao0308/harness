@@ -1,46 +1,57 @@
-# AI Harness Platform
+# Forge Harness
 
-AI Harness Platform turns a base model into an operational Agent system. The
-product combines model routing, Agent Studio, Workspace execution, tools, MCP,
-sandbox policy, knowledge grounding, Eval contracts, Specialists, observability,
-RBAC, retention, and deployment hardening into one private control plane.
+Forge Harness is a private-deployable enterprise AI control plane. It turns a
+model into an operational Agent system with explicit context, tools, policy,
+execution, evaluation, and audit boundaries.
 
 ```text
 Model + Harness = Agent
 ```
 
+The product is built for teams that need AI work to be runnable, observable,
+recoverable, and reviewable. It is not a generic chatbot or a static demo UI.
+
+## What It Provides
+
+| Capability | What Forge Harness does |
+|---|---|
+| Agent Studio | Configure models, prompts, capabilities, knowledge, and orchestration |
+| Agent Workspace | Turn a user goal into a visible, resumable Run |
+| Runtime | Plan, execute, pause, resume, cancel, replay, and delegate work |
+| Tools and MCP | Register capabilities and run them through policy, approval, audit, and sandbox boundaries |
+| Knowledge and context | Ingest sources, retrieve evidence, manage memory, assemble bounded context, and preserve citations |
+| Eval | Save Runs as cases and measure grounding, safety, tool use, regression, and trace contracts |
+| Observability | Connect model calls, tool calls, events, costs, policy decisions, and replay evidence |
+| Private deployment | Run the control plane with Docker Compose, systemd, Nginx/Caddy, and the documented recovery path |
+
+## The Runtime Loop
+
 ```text
 Operator
   |
   v
-Agent Console  ->  FastAPI Control Plane  ->  Postgres / Redis
-  |                      |                         |
-  |                      v                         v
-  |                Planner / Executor       Events / Audit / Cache
-  |                      |
-  v                      v
-Workspace Run  ->  Tools / MCP / Sandbox / Knowledge / Eval / Trace
+Agent Studio -> Agent Workspace -> Agent Run
+                                    |
+                                    v
+                    Planner -> Executor -> Tools / MCP / Sandbox
+                                    |
+                                    v
+                   Events -> Replay -> Eval -> Observability
 ```
 
-## Product Demos
+Every meaningful step has a server-side record. A successful Run exposes the
+plan, event stream, tool calls, sandbox boundary, context or grounding
+evidence, evaluation result, and cost data in one traceable surface.
 
-The repository includes durable capture targets for product media:
+## Run The Private Stack
 
-| Demo | Asset target | What it proves |
-|---|---|---|
-| 30 second private deploy | [docs/design/media/gifs/docker-compose-up.gif](docs/design/media/gifs/README.md) | Compose config, services, health checks |
-| 30 second first Agent Run | [docs/design/media/gifs/first-agent-run.gif](docs/design/media/gifs/README.md) | Workspace Plan, events, tools, sandbox, Eval evidence |
-| 30 second cost dashboard | [docs/design/media/gifs/cost-dashboard.gif](docs/design/media/gifs/README.md) | Model calls, token cost, cached rollups |
-
-Screenshot capture targets live in [docs/design/media/screenshots/](docs/design/media/screenshots/README.md)
-for Dashboard, onboarding, Agent Studio, Workspace, Run Detail, Eval,
-Observability, Specialist Marketplace, and data management.
-
-## For Users
-
-Start the private stack:
+Requirements: Docker with Compose, Python 3.11 for helper scripts, and a
+server-side model provider configuration.
 
 ```bash
+git clone https://github.com/luohao0308/forge-harness.git
+cd forge-harness
+
 eval "$(python3 scripts/generate-runtime-secrets.py)"
 export AUTH_JWT_SECRET HARNESS_SECRET_ENCRYPTION_KEY HARNESS_SECRET_ENCRYPTION_KEY_ID
 HARNESS_INITIAL_ADMIN_EMAIL=admin@example.com \
@@ -51,154 +62,108 @@ HARNESS_DOMAIN=localhost \
 docker compose -f compose.production.yml up -d --build
 ```
 
-Open the Console and log in with the initial admin email/password. After the
-first successful login, remove `HARNESS_INITIAL_ADMIN_EMAIL` and
-`HARNESS_INITIAL_ADMIN_PASSWORD` from the runtime environment and restart the
-API. Keep `AUTH_JWT_SECRET` stable. Then finish onboarding, configure the model
-provider, load demo data, and run the first task from Agent Workspace. A
-successful first pass creates a Run with a Plan, event stream, tool-call record,
-sandbox boundary, grounding or context manifest, Eval evidence, and cost data.
-Keep `HARNESS_SECRET_ENCRYPTION_KEY` stable as well; it decrypts stored
-business integration secrets and is generated server-side, never in the
-frontend.
+Open the Console, sign in with the initial admin account, configure the model
+provider, and run the first task from Agent Workspace. Remove the initial
+admin variables after the first successful login. Keep `AUTH_JWT_SECRET` and
+`HARNESS_SECRET_ENCRYPTION_KEY` stable; they protect sessions and stored
+integration secrets.
 
-See [First-Run Admin Runbook](docs/project-memory/runbooks/first-run-admin.md) for JWT login,
-smoke-test token exports, and the `scripts/create-admin.py` fallback.
+The [first-run admin runbook](docs/project-memory/runbooks/first-run-admin.md)
+covers login, smoke-test tokens, and the local admin fallback.
 
-Primary Console routes:
+## Console Surfaces
 
 | Route | Purpose |
 |---|---|
-| `/` | Dashboard with active Agents, Runs, cost, alerts, quick actions |
-| `/agents` | Agent Studio for model, prompt, tools, knowledge, and optimizer setup |
-| `/agents/default/workspace` | Agent Workspace with the single Plan execution surface |
-| `/runs` | Run History with virtualized rows and cursor-backed API data |
-| `/runs/:runId` | Run Detail with replay, events, tools, model calls, Eval, trace |
-| `/tools` | Tool Registry, adapters, MCP, capability packages, approvals |
-| `/knowledge` | Knowledge sources, connectors, indexing state, grounding setup |
-| `/evals` | Datasets, cases, Eval Runs, contracts, regression evidence |
-| `/subagent-specialists` | Specialist templates, stats, calibration, fanout behavior |
-| `/subagent-marketplace` | Signed Specialist sharing and installation |
-| `/observability` | Health, trace, cost, alerts, notifications |
-| `/settings/data-management` | Retention policy, exports, dry-run deletion, deletion audit |
-| `/help` | In-app Help Center with search and feedback |
-| `/help/troubleshooting` | 50+ searchable troubleshooting cases |
+| `/` | Dashboard with active Agents, Runs, cost, and alerts |
+| `/agents` | Agent Studio for model, prompt, capabilities, knowledge, and optimizer setup |
+| `/agents/default/workspace` | Chat-first Workspace and Plan execution surface |
+| `/runs` | Cursor-backed Run history |
+| `/runs/:runId` | Run detail, replay, events, tools, model calls, Eval, and trace evidence |
+| `/tools` | Tool Registry, adapters, MCP, capability packages, and approvals |
+| `/knowledge` | Knowledge sources, connectors, indexing, and grounding setup |
+| `/evals` | Datasets, cases, Eval Runs, contracts, and regression evidence |
+| `/observability` | Health, traces, costs, alerts, and notifications |
+| `/settings/data-management` | Retention, exports, dry-run deletion, and deletion audit |
 
-## Feature Matrix
+## Develop And Verify
 
-| Area | Current surface |
-|---|---|
-| Agent lifecycle | Create, clone, configure, attach capabilities, run Workspace Plans |
-| Model routing | Built-in provider defaults, DeepSeek-compatible gateway path, fallback metadata |
-| Tool adapters | 27+ real adapter operations across filesystem, shell, tests, network, GitHub, Slack, Notion, Linear, Code Interpreter, sandbox file, and MCP |
-| MCP | Protocol discovery, stdio/http/sse runtime config, sandboxed execution path |
-| Knowledge/RAG | Local sources, connector sync, chunking, grounding citations, context manifest |
-| Eval contracts | 9 contract categories across exact match, schema, grounding, safety, tool usage, Specialist output, regression, calibration, and trace evidence |
-| Specialists | System and org Specialists, selector decisions, calibration, dynamic fanout |
-| Marketplace | Signed listing validation, admin review, install, uninstall, archived history |
-| Observability | Events, replay, traces, spans, model calls, tool calls, cost rollups, alerts |
-| Security | JWT/API-key auth, organization RBAC, audit logs, verified notification URLs |
-| Data lifecycle | Retention policies, archived records, export ZIP, dry-run counts, confirmed deletion |
-| Performance | Redis-first query cache, cursor pagination, lazy routes, hashed assets, N+1 detector, k6 load scripts |
-| Deployment | Production Compose, Caddy, Nginx assets, Helm scaffold, backup/restore, CI release gates |
-
-## For Developers
-
-Read [docs/development/CONTRIBUTING.md](docs/development/CONTRIBUTING.md) for contribution flow when
-available, and use these stable entry points for local work:
+Use the repository's scoped entry points for local work:
 
 ```bash
-cd services/api-server && .venv/bin/python -m pytest
+cd services/api-server && .venv/bin/python -m pytest tests
 cd services/api-server && .venv/bin/python -m ruff check app tests
 cd apps/agent-console && npm test -- --run --pool forks --poolOptions.forks.singleFork
-cd apps/agent-console && npm run build
+cd apps/agent-console && npm run lint && npm run build
 python3 scripts/validate-docs.py
+git diff --check
 ```
 
-New AI agent sessions use the low-token startup contract:
+AI-assisted development starts from [the startup context](docs/development/ai/agent-startup-context.md),
+then runs:
 
-```text
-docs/development/ai/agent-startup-context.md
-docs/development/ai/task-progress.yaml
-python3 scripts/agent-context-brief.py --task "<user task>"
+```bash
+python3 scripts/agent-context-brief.py --task "<task>"
 ```
 
-Completion write-back targets are `docs/development/ai/task-progress.yaml` and a relevant
-`omx_wiki/` session or handoff page.
+The execution contract is [docs/development/ai/00-execution-protocol.md](docs/development/ai/00-execution-protocol.md),
+the machine progress source is [docs/development/ai/task-progress.yaml](docs/development/ai/task-progress.yaml),
+and the current handoff is [omx_wiki/project-handoff-current-state.md](omx_wiki/project-handoff-current-state.md).
 
-Core spec map:
-
-| Area | Document |
-|---|---|
-| Product | [docs/design/product-spec.md](docs/design/product-spec.md) |
-| Architecture | [docs/architecture/system-architecture-spec.md](docs/architecture/system-architecture-spec.md) |
-| Data and events | [docs/contracts/data-model-and-event-spec.md](docs/contracts/data-model-and-event-spec.md) |
-| API | [docs/contracts/api/api-spec.md](docs/contracts/api/api-spec.md) |
-| Agent runtime | [docs/architecture/agent-runtime-spec.md](docs/architecture/agent-runtime-spec.md) |
-| Tool and MCP runtime | [docs/contracts/tool-mcp-runtime-spec.md](docs/contracts/tool-mcp-runtime-spec.md) |
-| Guardrail policy | [docs/contracts/guardrail-policy-spec.md](docs/contracts/guardrail-policy-spec.md) |
-| Eval harness | [docs/testing/eval-harness-spec.md](docs/testing/eval-harness-spec.md) |
-| Console UI | [docs/design/console-ui-spec.md](docs/design/console-ui-spec.md) |
-| Benchmark | [docs/testing/benchmark-spec.md](docs/testing/benchmark-spec.md) |
-| Portfolio demo | [docs/design/portfolio-demo-spec.md](docs/design/portfolio-demo-spec.md) |
-| Current tasks | [docs/TASKS.md](docs/TASKS.md) |
-| Machine progress | [docs/development/ai/task-progress.yaml](docs/development/ai/task-progress.yaml) |
-
-Stage docs:
-
-| Stage | Document |
-|---|---|
-| 01 | [docs/development/ai/stages/01-agent-workspace-console.md](docs/development/ai/stages/01-agent-workspace-console.md) |
-| 02 | [docs/development/ai/stages/02-agent-studio-config.md](docs/development/ai/stages/02-agent-studio-config.md) |
-| 03 | [docs/development/ai/stages/03-harness-tool-mcp.md](docs/development/ai/stages/03-harness-tool-mcp.md) |
-| 04 | [docs/development/ai/stages/04-event-sourcing-replay-ui.md](docs/development/ai/stages/04-event-sourcing-replay-ui.md) |
-| 05 | [docs/development/ai/stages/05-eval-regression.md](docs/development/ai/stages/05-eval-regression.md) |
-| 06 | [docs/development/ai/stages/06-warmpool-infra.md](docs/development/ai/stages/06-warmpool-infra.md) |
-
-## API Reference
-
-FastAPI exposes OpenAPI at `/openapi.json` and interactive docs at `/docs`.
-Generated API reference output lives in [docs/contracts/api-reference/](docs/contracts/api-reference/).
-
-Regenerate it with:
+The Electron desktop surface has its own [development and release guide](docs/development/desktop/README.md).
+The API reference is generated from FastAPI:
 
 ```bash
 python3 scripts/generate-api-docs.py
 ```
 
-## Load And Scale
-
-Performance guidance lives in [docs/project-memory/runbooks/performance.md](docs/project-memory/runbooks/performance.md).
-The baseline scripts under [tests/load/](tests/load/) cover mixed user traffic,
-spike traffic, and soak traffic through k6. The Console build emits hashed
-`assets/` files with immutable cache headers through the production Nginx asset
-service.
-
-## Project Layout
+## Repository Layout
 
 ```text
-harness/
+forge-harness/
 ├─ apps/
-│  ├─ agent-console/
-│  └─ web-site/
+│  ├─ agent-console/     # Browser control plane UI
+│  ├─ desktop-app/       # Native local workspace and runtime
+│  └─ web-site/          # Public product and documentation shell
 ├─ services/
-│  └─ api-server/
-├─ docs/
-│  ├─ api-reference/
-│  ├─ gifs/
-│  ├─ runbooks/
-│  └─ screenshots/
-├─ deploy/
-├─ scripts/
-├─ tests/load/
-└─ omx_wiki/
+│  └─ api-server/        # FastAPI API, runtime, workers, data, and events
+├─ deploy/               # Compose, Helm scaffold, proxies, systemd, monitoring
+├─ docs/                 # Product, architecture, contracts, runbooks, and plans
+├─ scripts/              # Smoke, docs, API, and release checks
+└─ omx_wiki/             # Handoffs and validated project memory
 ```
 
-## Roadmap And Community
+## Read Next
 
-Current roadmap source: [docs/plans/roadmap.md](docs/plans/roadmap.md).
+- [Product positioning](docs/design/product-positioning.md)
+- [Product specification](docs/design/product-spec.md)
+- [System architecture](docs/architecture/system-architecture-spec.md)
+- [Agent runtime](docs/architecture/agent-runtime-spec.md)
+- [Data and events](docs/contracts/data-model-and-event-spec.md)
+- [API contract](docs/contracts/api/api-spec.md)
+- [Tool and MCP runtime](docs/contracts/tool-mcp-runtime-spec.md)
+- [Guardrail policy](docs/contracts/guardrail-policy-spec.md)
+- [Eval harness](docs/testing/eval-harness-spec.md)
+- [Console UI](docs/design/console-ui-spec.md)
+- [Benchmark](docs/testing/benchmark-spec.md)
+- [Portfolio demo](docs/design/portfolio-demo-spec.md)
+- [API reference](docs/contracts/api-reference/README.md)
+- [Deployment runbook](docs/project-memory/runbooks/deployment.md)
+- [Current tasks](docs/TASKS.md)
+- [AI startup context](docs/development/ai/agent-startup-context.md)
 
-Community links are operator-owned placeholders for the private distribution:
+Stage references:
 
-- Slack: `https://example.invalid/harness-slack`
-- Discord: `https://example.invalid/harness-discord`
+- [01 Agent Workspace](docs/development/ai/stages/01-agent-workspace-console.md)
+- [02 Agent Studio](docs/development/ai/stages/02-agent-studio-config.md)
+- [03 Tools and MCP](docs/development/ai/stages/03-harness-tool-mcp.md)
+- [04 Event sourcing and replay](docs/development/ai/stages/04-event-sourcing-replay-ui.md)
+- [05 Eval regression](docs/development/ai/stages/05-eval-regression.md)
+- [06 WarmPool infrastructure](docs/development/ai/stages/06-warmpool-infra.md)
+
+## Product Boundary
+
+Forge Harness targets private enterprise deployment and internal validation.
+Kubernetes topology, full SaaS commercialization, and production credentials
+are outside the default local-development scope. Secrets stay server-side and
+are never committed to the repository.

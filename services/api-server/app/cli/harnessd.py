@@ -498,7 +498,7 @@ async def serve(
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="harnessd",
-        description="Run the loopback-only Harness desktop sidecar.",
+        description="Run the loopback-only Forge Harness Desktop sidecar.",
     )
     parser.add_argument(
         "--bootstrap-fd",

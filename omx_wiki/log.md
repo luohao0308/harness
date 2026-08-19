@@ -1,5 +1,9 @@
 # Wiki Log
 
+## 2026-08-20
+
+- Completed `BRAND-001`: adopted Forge Harness as the public product name and refreshed the README, website, Console, Desktop, API/OpenAPI metadata, active product docs, and release links while preserving `HARNESS_*` and `agent-harness` runtime identifiers.
+
 ## 2026-08-16
 
 - Added [[session-2026-08-16-large-plan-decomposition-gate]] and a `large-plan-decomposition` context route. Large plans now stop before implementation, present 2-6 ordered slices for user approval, run exactly one approved slice at a time, auto-continue after slice validation, and re-confirm only for material scope, ordering, interface, migration, or risk drift; docs validation locks the contract across AGENTS, execution protocol, plan sources, and context routing.

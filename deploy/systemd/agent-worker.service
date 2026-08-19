@@ -1,5 +1,5 @@
 [Unit]
-Description=Agent Harness Dramatiq Worker
+Description=Forge Harness Agent Worker
 After=network-online.target postgresql.service redis.service
 Wants=network-online.target
 

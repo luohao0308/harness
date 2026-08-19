@@ -2,7 +2,7 @@
 
 ## 目标
 
-Agent Workspace 是 AI Harness Platform 的主使用入口。下一代形态是 Workspace Pro：在现有 `/agents/:agentId/workspace` 路由上提供 chat-first 的 Agent 对话、规划、工具、产物和运行观察能力，而不是另起独立产品。
+Agent Workspace 是 Forge Harness 的主使用入口。下一代形态是 Workspace Pro：在现有 `/agents/:agentId/workspace` 路由上提供 chat-first 的 Agent 对话、规划、工具、产物和运行观察能力，而不是另起独立产品。
 
 产品语义中不存在“主任务”。用户发起的是 `Agent Run`；`tasks` 表只是当前兼容存储实现。Conversation Tree 是 Workspace UI 状态与审计输入，不替代 Agent Run、Event Store、ModelCall、ToolCall 或 ToolApproval。
 本文件描述目标能力和验收边界，不锁死具体组件名、面板数量、宽度或请求辅助函数。

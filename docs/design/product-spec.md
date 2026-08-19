@@ -2,7 +2,7 @@
 
 ## Summary
 
-AI Harness Platform is a Production Agent Harness Platform for AI Harness Engineers and Agent Infrastructure Engineers. It is not a plain chatbot, not a generic task tracker, and not a static showcase console.
+Forge Harness is a production AI control plane for AI Harness Engineers and Agent Infrastructure Engineers. It is not a plain chatbot, not a generic task tracker, and not a static showcase console.
 
 This is a living product reference, not a component lock. Equivalent UI decomposition is acceptable when the user-visible behavior, traceability, and audit records stay intact.
 

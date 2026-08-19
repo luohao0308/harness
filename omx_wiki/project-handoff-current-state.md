@@ -10,13 +10,15 @@ This is the first page a new session or incoming agent should read. It connects 
 
 ## Product Target
 
-The project is the AI Harness Platform:
+The project is Forge Harness, a private enterprise AI control plane:
 
 ```text
 Model + Harness = Agent
 ```
 
 The public website remains a public information shell. The implementation center is the Agent Console plus FastAPI backend.
+
+- 2026-08-20 `BRAND-001` Forge Harness rename completed. The public README, website, Console, Desktop, API/OpenAPI metadata, active product docs, and release links now use Forge Harness; `HARNESS_*`, `agent-harness`, and other runtime identifiers remain compatible.
 
 The current final task target is **Agent Knowledge Harness**. Based on the repository HTML report `docs/工作日志/reports/release-gate-handoff-diff-2026-05-14.html`, the target is not merely "add memory" or "add RAG"; it is to make Harness a configurable, auditable, and evaluable capability layer across memory, knowledge retrieval, MCP, skills, context/token routing, hallucination control, Eval, Observability, Policy/Sandbox, and Agent orchestration.
 
@@ -82,7 +84,7 @@ Evidence from `docs/development/ai/task-progress.yaml`:
 - 2026-08-04 latest Desktop Team Mode workspace closeout: Electron `/teams/:teamId` defaults to a chat-first Collaboration view with a compact member roster and `80/20` activity inspector, can switch to a `56/44` dependency Task graph, and retains the existing multi-column view. Browser Team Mode remains unchanged. Graph edges merge `blocked_by_json` and `blocks_json`; strongly connected components are condensed before layout so cycles stay in one deterministic row with external prerequisites/downstream tasks; route changes do not cross-write per-Team view preferences; and the conversation full-screen action controls the visible desktop side pane. Visual Ralph remains Collaboration `92` and Task graph `91`; Team Vitest passes `25` tests, TypeScript and production build pass, and the fresh full Chromium run passes all 3 desktop/create-send/mobile scenarios. See [[session-2026-07-28-desktop-team-mode-workspace]].
 - `current_stage`: `07-private-deployable-harness-chain`
 - `current_status`: `completed`
-- `product`: `AI Harness Platform`
+- `product`: `Forge Harness`
 - `formula`: `Model + Harness = Agent`
 - Stage 01-07 are recorded as completed.
 - 2026-07-12 latest Terminal capability shared-state closure: production terminal tokens and active-session limits now use Redis Lua transactions across API replicas. One-time consumption, terminal binding, concurrent per-principal caps, lease pruning, and reservations are atomic; active WebSockets renew a 90-second lease every 30 seconds; production Redis failure closes token/WebSocket access instead of degrading to local state. Real temporary Redis tests proved cross-instance consumption, concurrent cap enforcement, and lease recovery. Backend regression passed `22` tests, Agent Console Terminal regression passed `32` tests, and Desktop passed `31 files / 278 tests`. See [[session-2026-07-12-terminal-capability-shared-state]].

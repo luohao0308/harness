@@ -38,7 +38,7 @@ It also packages `deploy/helm/harness` and boots `compose.ci.yml` for a health s
 
 `release.yml` runs on `v*.*.*` tags after verifying the tag is reachable from
 `origin/main`. It builds tagged API and Console images, packages the Helm chart,
-and builds Harness Desktop installers on macOS, Windows, and Linux.
+and builds Forge Harness Desktop installers on macOS, Windows, and Linux.
 
 Desktop release jobs build the Agent Console renderer first, run focused desktop
 tests for `electron-updater`, Sentry crash reporting, main-process startup

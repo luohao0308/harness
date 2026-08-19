@@ -38,9 +38,9 @@ def main() -> None:
     API_DIR.mkdir(parents=True, exist_ok=True)
     OPENAPI_PATH.write_text(json.dumps(schema, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     lines = [
-        "# Harness API Reference",
+        "# Forge Harness API Reference",
         "",
-        f"Title: {schema.get('info', {}).get('title', 'Harness API')}",
+        f"Title: {schema.get('info', {}).get('title', 'Forge Harness API')}",
         f"Version: {schema.get('info', {}).get('version', 'unknown')}",
         "",
         "Generated from FastAPI OpenAPI metadata.",

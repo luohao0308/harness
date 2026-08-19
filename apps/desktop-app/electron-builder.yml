@@ -1,6 +1,6 @@
 appId: com.harness.desktop
-productName: Harness Desktop
-copyright: Copyright © 2026 Harness Team
+productName: Forge Harness Desktop
+copyright: Copyright © 2026 Forge Harness Team
 artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 asar: true
 compression: maximum
@@ -33,7 +33,7 @@ extraMetadata:
 publish:
   provider: github
   owner: luohao0308
-  repo: harness
+  repo: forge-harness
   vPrefixedTagName: true
   releaseType: release
 
@@ -60,7 +60,7 @@ dmg:
   sign: false
 
 win:
-  publisherName: Harness Team
+  publisherName: Forge Harness Team
   verifyUpdateCodeSignature: true
   target:
     - target: nsis
@@ -74,15 +74,15 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: always
   createStartMenuShortcut: true
-  shortcutName: Harness Desktop
+  shortcutName: Forge Harness Desktop
   deleteAppDataOnUninstall: false
 
 linux:
   category: Development
-  maintainer: Harness Team <release@harness.local>
+  maintainer: Forge Harness Team <release@harness.local>
   executableName: harness-desktop
-  synopsis: Harness Desktop agent workspace
-  description: Desktop shell for Harness Agent Workspace with native integrations and auto-update support.
+  synopsis: Forge Harness Desktop workspace
+  description: Desktop shell for Forge Harness with native integrations and auto-update support.
   target:
     - target: AppImage
       arch:
