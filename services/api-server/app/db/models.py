@@ -452,8 +452,11 @@ class Trigger(Base):
     organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
     type: Mapped[str] = mapped_column(String(32), nullable=False, default="webhook")
-    endpoint_path: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
-    secret_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    config_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    runtime_state_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    endpoint_path: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
+    secret_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -462,6 +465,44 @@ class Trigger(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+
+
+class TriggerInvocation(Base):
+    __tablename__ = "trigger_invocations"
+    __table_args__ = (
+        UniqueConstraint(
+            "trigger_id", "idempotency_key", name="trigger_invocations_trigger_key_uidx"
+        ),
+        CheckConstraint(
+            "status IN ('RECEIVED', 'PLANNED', 'RETRYING', 'RUNNING', 'WAITING_APPROVAL', "
+            "'SUCCEEDED', 'FAILED', 'DISABLED')",
+            name="trigger_invocations_status_chk",
+        ),
+        Index("ix_trigger_invocations_trigger_created", "trigger_id", "created_at"),
+        Index("ix_trigger_invocations_org_created", "organization_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    trigger_id: Mapped[str] = mapped_column(ForeignKey("triggers.id"), nullable=False, index=True)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    config_summary_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    payload_summary_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    workspace_root: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="RECEIVED", index=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True, index=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class ApiGatewayRoute(Base):
@@ -1667,6 +1708,106 @@ class KnowledgeSource(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class ProjectKnowledgeIndex(Base):
+    """Durable Desktop project-to-Knowledge binding without storing a path."""
+
+    __tablename__ = "project_knowledge_indexes"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "agent_id",
+            "desktop_profile_id",
+            "root_identity",
+            name="project_knowledge_indexes_binding_uidx",
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "agent_id",
+            "idempotency_key",
+            name="project_knowledge_indexes_scope_idempotency_uidx",
+        ),
+        UniqueConstraint(
+            "knowledge_source_id",
+            name="project_knowledge_indexes_source_uidx",
+        ),
+        CheckConstraint(
+            "status IN ('ACTIVE', 'PAUSED', 'ERROR', 'UNBOUND')",
+            name="project_knowledge_indexes_status_chk",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    knowledge_source_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_sources.id"),
+        nullable=False,
+        index=True,
+    )
+    desktop_profile_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    root_identity: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE", index=True)
+    ignore_patterns_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    snapshot_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    snapshot_cursor: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    last_snapshot_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    unbound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ProjectKnowledgeFile(Base):
+    """Per-relative-file receipt used by the incremental project indexer."""
+
+    __tablename__ = "project_knowledge_files"
+    __table_args__ = (
+        UniqueConstraint(
+            "index_id",
+            "relative_path",
+            name="project_knowledge_files_index_path_uidx",
+        ),
+        CheckConstraint(
+            "status IN ('PENDING', 'INDEXED', 'STALE', 'TOMBSTONED', 'IGNORED', 'ERROR')",
+            name="project_knowledge_files_status_chk",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    index_id: Mapped[str] = mapped_column(
+        ForeignKey("project_knowledge_indexes.id"),
+        nullable=False,
+        index=True,
+    )
+    relative_path: Mapped[str] = mapped_column(Text, nullable=False)
+    path_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    content_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    mime_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    knowledge_document_id: Mapped[str | None] = mapped_column(
+        ForeignKey("knowledge_documents.id"),
+        nullable=True,
+        index=True,
+    )
+    document_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING", index=True)
+    last_seen_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    tombstoned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class KnowledgeDocument(Base):
     __tablename__ = "knowledge_documents"
 
@@ -2308,6 +2449,25 @@ class WarmPoolBenchmarkRun(Base):
 
 class AdminAuditEvent(Base):
     __tablename__ = "admin_audit_events"
+    __table_args__ = (
+        Index(
+            "admin_audit_events_org_resource_action_uidx",
+            "organization_id",
+            "event_type",
+            "resource_type",
+            "resource_id",
+            "action",
+            unique=True,
+            sqlite_where=text(
+                "event_type = 'DESKTOP_CHANGE_REVIEW_AUDITED' "
+                "AND resource_type = 'desktop_change_review'"
+            ),
+            postgresql_where=text(
+                "event_type = 'DESKTOP_CHANGE_REVIEW_AUDITED' "
+                "AND resource_type = 'desktop_change_review'"
+            ),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
@@ -2523,9 +2683,7 @@ class AgentTemplate(Base):
     """
 
     __tablename__ = "agent_templates"
-    __table_args__ = (
-        Index("ix_agent_templates_is_active", "is_active"),
-    )
+    __table_args__ = (Index("ix_agent_templates_is_active", "is_active"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -2648,12 +2806,8 @@ class RuntimeJob(Base):
             "ix_runtime_jobs_active_dedupe_uidx",
             "dedupe_key",
             unique=True,
-            sqlite_where=text(
-                "dedupe_key IS NOT NULL AND status IN ('queued', 'running')"
-            ),
-            postgresql_where=text(
-                "dedupe_key IS NOT NULL AND status IN ('queued', 'running')"
-            ),
+            sqlite_where=text("dedupe_key IS NOT NULL AND status IN ('queued', 'running')"),
+            postgresql_where=text("dedupe_key IS NOT NULL AND status IN ('queued', 'running')"),
         ),
     )
 

@@ -31,6 +31,7 @@
 | Agent 与工具运行时 | [Agent Runtime](architecture/agent-runtime-spec.md)、[Tool/MCP](contracts/tool-mcp-runtime-spec.md)、[Guardrail](contracts/guardrail-policy-spec.md) | Planner、Executor、Tool/MCP、Policy、Sandbox |
 | Eval 与控制台 | [Eval Harness](testing/eval-harness-spec.md)、[Console UI](design/console-ui-spec.md) | 回归契约、证据投影和前端行为 |
 | AI 执行协议 | [development/ai/README.md](development/ai/README.md)、[development/ai/00-execution-protocol.md](development/ai/00-execution-protocol.md) | 低 token 启动、阶段门禁和任务回写 |
+| 功能目录与成熟度 | [FEATURE-MATRIX.md](FEATURE-MATRIX.md)、[feature-catalog.json](development/ai/feature-catalog.json) | 全量功能、实现状态、生产成熟度、证据和已知缺口；矩阵由脚本生成 |
 | 开发与运行指南 | [development/](development/)、[project-memory/runbooks/](project-memory/runbooks/) | 开发、部署、发布、排障和用户流程 |
 | 桌面与移动端 | [Desktop](development/desktop/README.md)、[Mobile Release](operations/mobile/phase7-mobile-release.md) | Electron、本地运行时和移动端交付 |
 | 历史证据 | [工作日志/](工作日志/)、[工作日志/reports/](工作日志/reports/)、[../omx_wiki/](../omx_wiki/) | 验证记录、截图目录和会话交接 |

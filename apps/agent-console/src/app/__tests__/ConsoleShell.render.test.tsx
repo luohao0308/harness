@@ -150,7 +150,9 @@ describe("ConsoleShell", () => {
 
   it.each([
     ["/teams/team-1", "团队"],
-    ["/runs/run-1", "审批"],
+    ["/runs/run-1", "待处理"],
+    ["/attention", "待处理"],
+    ["/changes", "变更"],
     ["/terminal", "终端"],
     ["/desktop", "设置"],
   ])("uses the compact desktop operation shell for %s", (path, activeLabel) => {
@@ -165,10 +167,8 @@ describe("ConsoleShell", () => {
       "href",
       "/agents/default/workspace?desktop_panel=files",
     );
-    expect(screen.getByRole("link", { name: "审批" })).toHaveAttribute(
-      "href",
-      "/agents/default/workspace?desktop_panel=approvals",
-    );
+    expect(screen.getByRole("link", { name: "待处理" })).toHaveAttribute("href", "/attention");
+    expect(screen.getByRole("link", { name: "变更" })).toHaveAttribute("href", "/changes");
     expect(screen.queryByRole("navigation", { name: "控制台导航" })).not.toBeInTheDocument();
     expect(screen.queryByText("控制台")).not.toBeInTheDocument();
   });

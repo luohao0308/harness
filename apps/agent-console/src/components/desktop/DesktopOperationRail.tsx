@@ -1,10 +1,12 @@
 import {
+  FileDiff,
   FolderOpen,
+  ListChecks,
   MessageSquareText,
   Settings2,
-  ShieldCheck,
   SquareTerminal,
   Users,
+  Workflow,
 } from "lucide-react";
 import type { JSX } from "react";
 import { Link, useLocation } from "react-router-dom";
@@ -12,7 +14,7 @@ import { Link, useLocation } from "react-router-dom";
 import { cn } from "../../lib/utils";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 
-type DesktopOperation = "tasks" | "teams" | "terminal" | "files" | "approvals" | "settings";
+type DesktopOperation = "tasks" | "teams" | "terminal" | "files" | "changes" | "attention" | "automations" | "settings";
 
 export function DesktopOperationRail(): JSX.Element {
   const location = useLocation();
@@ -50,10 +52,22 @@ export function DesktopOperationRail(): JSX.Element {
       icon: FolderOpen,
     },
     {
-      key: "approvals" as const,
-      to: `${workspacePath}?desktop_panel=approvals`,
-      label: "审批",
-      icon: ShieldCheck,
+      key: "changes" as const,
+      to: "/changes",
+      label: "变更",
+      icon: FileDiff,
+    },
+    {
+      key: "attention" as const,
+      to: "/attention",
+      label: "待处理",
+      icon: ListChecks,
+    },
+    {
+      key: "automations" as const,
+      to: "/agents?desktop_panel=triggers",
+      label: "自动化",
+      icon: Workflow,
     },
   ];
 
@@ -134,8 +148,12 @@ function isOperationActive(
   if (operation === "teams") return /^\/teams(?:\/|$)/.test(pathname);
   if (operation === "terminal") return pathname === "/terminal";
   if (operation === "files") return /^\/agents\/[^/]+\/workspace$/.test(pathname) && panel === "files";
-  if (operation === "approvals") {
-    return (/^\/agents\/[^/]+\/workspace$/.test(pathname) && panel === "approvals") || /^\/runs(?:\/|$)/.test(pathname);
+  if (operation === "changes") return pathname === "/changes";
+  if (operation === "attention") {
+    return pathname === "/attention"
+      || (/^\/agents\/[^/]+\/workspace$/.test(pathname) && panel === "approvals")
+      || /^\/runs(?:\/|$)/.test(pathname);
   }
+  if (operation === "automations") return pathname === "/agents" && panel === "triggers";
   return pathname === "/desktop" || pathname === "/settings/advanced";
 }

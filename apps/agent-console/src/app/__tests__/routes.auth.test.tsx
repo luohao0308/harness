@@ -20,6 +20,7 @@ import {
   LegacyPathRedirect,
   LegacySpecialistDetailRedirect,
   RequireAuth,
+  router,
 } from "../routes";
 
 function renderProtected(path = "/settings/secrets") {
@@ -51,6 +52,11 @@ afterEach(() => {
 });
 
 describe("RequireAuth", () => {
+  it("registers the desktop change review route", () => {
+    const rootRoute = router.routes.find((route) => route.path === "/");
+    expect(rootRoute?.children?.some((route) => route.path === "changes")).toBe(true);
+  });
+
   it("redirects unauthenticated console routes to login", () => {
     renderProtected("/settings/secrets");
 

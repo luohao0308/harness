@@ -9,6 +9,7 @@ import type {
   LocalRuntimeModelDiscovery,
   LocalRuntimeModelDiscoveryInput,
   LocalRuntimeModelStatus,
+  DesktopWorkspaceAuthorization,
 } from '../preload-api'
 
 export type LocalRuntimeModelErrorCode =
@@ -121,6 +122,43 @@ export function resolveLocalRuntimePaths(options: Pick<LocalRuntimeManagerOption
 }
 
 export class LocalRuntimeManager {
+  async authorizeWorkspace(
+    profileId: string,
+    rootPath: string,
+  ): Promise<DesktopWorkspaceAuthorization> {
+    const endpoint = this.requireEndpoint()
+    const response = await this.options.fetchRuntime(
+      new URL('/api/local-runtime/workspace-authorization', endpoint.origin),
+      {
+        method: 'POST',
+        headers: this.bootstrapHeaders(true),
+        body: JSON.stringify({ profile_id: profileId, root_path: rootPath }),
+        redirect: 'error',
+      },
+    )
+    if (!response.ok) throw new Error(`workspace authorization failed: ${response.status}`)
+    const body = await response.json() as {
+      authorization?: unknown
+      label?: unknown
+      expires_at?: unknown
+    }
+    if (
+      typeof body.authorization !== 'string'
+      || !body.authorization
+      || typeof body.label !== 'string'
+      || !body.label
+      || typeof body.expires_at !== 'string'
+      || !body.expires_at
+    ) {
+      throw new Error('workspace authorization returned an invalid response')
+    }
+    return {
+      authorization: body.authorization,
+      label: body.label,
+      expiresAt: body.expires_at,
+    }
+  }
+
   private readonly options: Required<Pick<LocalRuntimeManagerOptions,
     'spawnRuntime' | 'fetchRuntime' | 'createSecrets' | 'startupTimeoutMs' | 'healthPollMs' |
     'shutdownTimeoutMs' | 'maxRestarts' | 'initialBackoffMs' | 'desktopSessionRenewalMs' |

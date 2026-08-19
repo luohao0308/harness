@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -68,6 +69,72 @@ def recover_subagents(payload: dict[str, Any], session: Session) -> dict[str, An
     )
 
 
+def execute_trigger_invocation(payload: dict[str, Any], session: Session) -> dict[str, Any]:
+    """Execute one persisted invocation; never create a second Run locally.
+
+    The Trigger service is intentionally imported lazily so the local runtime
+    remains importable while the service migration is being rolled out.
+    """
+    invocation_id = str(payload.get("invocation_id", "")).strip()
+    if not invocation_id:
+        raise ValueError("trigger invocation_id is required")
+    from app.core.config import get_settings
+    from app.db.models import Trigger, TriggerInvocation, utc_now
+    from app.runtime_jobs.errors import RuntimeJobDeferredError
+    from app.runtime_jobs.profile import is_local_runtime_profile
+
+    invocation = session.get(TriggerInvocation, invocation_id)
+    trigger = session.get(Trigger, invocation.trigger_id) if invocation is not None else None
+    if invocation is None or trigger is None:
+        raise ValueError("trigger invocation not found")
+    if not is_local_runtime_profile():
+        raise RuntimeError("local trigger invocation handler requires the local runtime profile")
+    expires_at_raw = str(payload.get("expires_at") or "").strip()
+    if expires_at_raw:
+        try:
+            expires_at = datetime.fromisoformat(expires_at_raw)
+        except ValueError as exc:
+            raise ValueError("trigger invocation expires_at is invalid") from exc
+        if expires_at <= utc_now():
+            now = utc_now()
+            invocation.status = "FAILED"
+            invocation.error = "Trigger invocation expired before execution"
+            invocation.updated_at = now
+            invocation.completed_at = now
+            session.flush()
+            return {"status": "FAILED", "reason": "expired"}
+    if not bool(getattr(get_settings(), "trigger_automation_enabled", False)):
+        raise RuntimeJobDeferredError("Trigger automation is paused", delay_seconds=30)
+    invocation.attempt = max(invocation.attempt, int(payload.get("_runtime_attempt", 1)))
+    try:
+        from app.triggers.service import TriggerInvocationLeaseBusy
+        from app.triggers.service import execute_trigger_invocation as execute
+    except ImportError as exc:
+        raise RuntimeError("trigger invocation service is unavailable") from exc
+    try:
+        result = execute(invocation_id=invocation_id, session=session)
+    except TriggerInvocationLeaseBusy as exc:
+        raise RuntimeJobDeferredError(
+            "Trigger invocation execution lease is busy",
+            delay_seconds=exc.retry_after_seconds,
+        ) from exc
+    if isinstance(result, dict):
+        return result
+    if hasattr(result, "status"):
+        return {
+            "status": str(result.status),
+            "invocation_id": str(getattr(result, "id", invocation_id)),
+            "run_id": getattr(result, "run_id", None),
+        }
+    return {"status": str(result)}
+
+
+def poll_trigger_sources(payload: dict[str, Any], session: Session) -> dict[str, Any]:
+    from app.workers.trigger_source_worker import poll_local_trigger_sources
+
+    return poll_local_trigger_sources(payload, session=session)
+
+
 def default_runtime_job_handlers() -> dict[str, RuntimeJobHandler]:
     return {
         "agent_assignment": execute_agent_assignment,
@@ -75,4 +142,6 @@ def default_runtime_job_handlers() -> dict[str, RuntimeJobHandler]:
         "team_runtime_tick": tick_team_runtime,
         "alert_evaluation": evaluate_alerts,
         "subagent_recovery": recover_subagents,
+        "trigger_invocation": execute_trigger_invocation,
+        "trigger_source_poll": poll_trigger_sources,
     }

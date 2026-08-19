@@ -289,6 +289,35 @@ describe('SyncService', () => {
       )
     })
 
+    it('preserves offline Agent snapshots as their own idempotent entity type', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ applied: 1, conflicts: [] }),
+      } as Response)
+      const snapshot = { schemaVersion: 1, run: { id: 'run-1', status: 'COMPLETED' } }
+
+      await syncService.pushOperations([{
+        operation_type: 'CREATE',
+        entity_type: 'offline_agent_run',
+        entity_id: 'run-1',
+        payload_json: JSON.stringify(snapshot),
+        client_timestamp: '2026-08-19T00:00:00.000Z',
+        retry_count: 0,
+        last_retry_at: null,
+        status: 'PENDING',
+        error_message: null,
+      }])
+
+      const request = vi.mocked(fetch).mock.calls[0][1]
+      expect(JSON.parse(String(request?.body))).toEqual({ operations: [{
+        type: 'create',
+        entity_type: 'offline_agent_run',
+        entity_id: 'run-1',
+        data: snapshot,
+        timestamp: '2026-08-19T00:00:00.000Z',
+      }] })
+    })
+
     it('should handle empty operations array', async () => {
       await expect(syncService.pushOperations([])).resolves.not.toThrow()
       expect(fetch).not.toHaveBeenCalled()
@@ -439,6 +468,49 @@ describe('SyncService', () => {
 
       const updatedOp = offlineQueue.get(op.id!)
       expect(updatedOp?.status).toBe('COMPLETED')
+    })
+
+    it('attributes a server conflict to its operation instead of the whole entity', async () => {
+      const conflicted = offlineQueue.enqueue({
+        operation_id: 'op-old',
+        operation_type: 'CREATE',
+        entity_type: 'offline_agent_run',
+        entity_id: 'run-1',
+        payload_json: JSON.stringify({ run: { id: 'run-1', syncRevision: 1 } }),
+        client_timestamp: new Date().toISOString(),
+      })
+      const accepted = offlineQueue.enqueue({
+        operation_id: 'op-new',
+        operation_type: 'CREATE',
+        entity_type: 'offline_agent_run',
+        entity_id: 'run-1',
+        payload_json: JSON.stringify({ run: { id: 'run-1', syncRevision: 2 } }),
+        client_timestamp: new Date().toISOString(),
+      })
+
+      vi.mocked(fetch)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ tasks: [], server_timestamp: '2026-06-25T00:00:00.000Z', has_more: false }),
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            applied: 1,
+            conflicts: [{
+              entity_id: 'run-1',
+              entity_type: 'offline_agent_run',
+              operation_id: 'op-old',
+              server_version: {},
+              client_version: {},
+            }],
+          }),
+        } as Response)
+
+      await syncService.sync()
+
+      expect(offlineQueue.get(conflicted.id!)?.status).toBe('FAILED')
+      expect(offlineQueue.get(accepted.id!)?.status).toBe('COMPLETED')
     })
 
     it('should handle conflicts during sync', async () => {

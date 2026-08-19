@@ -221,13 +221,21 @@ describe('Electron App Startup', () => {
     }
   })
 
-  test('does not open the legacy offline SQLite runtime in managed local mode', async () => {
+  test('registers offline IPC without starting background sync in managed local mode', async () => {
     process.env.HARNESS_TEST_MANAGED_RUNTIME = '1'
     const offlineRuntime = await import('../services/offline-sync-runtime')
 
     await import('../main')
 
-    await vi.waitFor(() => expect(offlineRuntime.startDesktopOfflineSyncRuntime).not.toHaveBeenCalled())
+    await vi.waitFor(() => expect(offlineRuntime.startDesktopOfflineSyncRuntime).toHaveBeenCalledWith({ enableBackgroundSync: false }))
+  })
+
+  test('registers offline IPC with background sync outside managed local mode', async () => {
+    const offlineRuntime = await import('../services/offline-sync-runtime')
+
+    await import('../main')
+
+    await vi.waitFor(() => expect(offlineRuntime.startDesktopOfflineSyncRuntime).toHaveBeenCalledWith({ enableBackgroundSync: true }))
   })
 
   test('renews the managed local session after system resume', async () => {

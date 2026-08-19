@@ -21,6 +21,7 @@ type StoredCredential =
 
 type StoredDesktopProfile = Omit<DesktopProfileMetadata, 'hasCredential' | 'credentialStorage'> & {
   credential?: StoredCredential
+  workspaceRoot?: string
 }
 
 export type WindowState = {
@@ -59,6 +60,7 @@ export type Phase6State = {
   windows: Record<string, WindowState>
   localModel: LocalModelSettings
   offlineTasks: OfflineTask[]
+  projectKnowledgeGenerations: Record<string, number>
 }
 
 const DEFAULT_PROFILE_ID = 'default'
@@ -97,6 +99,7 @@ function defaultState(): Phase6State {
     windows: {},
     localModel: { ...DEFAULT_LOCAL_MODEL, updatedAt: now },
     offlineTasks: [],
+    projectKnowledgeGenerations: {},
   }
 }
 
@@ -115,6 +118,9 @@ export function readPhase6State(): Phase6State {
         ? { ...fallback.localModel, ...parsed.localModel }
         : fallback.localModel,
       offlineTasks: Array.isArray(parsed.offlineTasks) ? parsed.offlineTasks.slice(0, 100) : [],
+      projectKnowledgeGenerations: isRecord(parsed.projectKnowledgeGenerations)
+        ? Object.fromEntries(Object.entries(parsed.projectKnowledgeGenerations).filter(([, value]) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)) as Record<string, number>
+        : {},
     }
     if (parsed.schemaVersion !== PHASE6_STATE_SCHEMA_VERSION || hasLegacyProfileToken(parsed.profiles)) {
       writePhase6State(normalized)
@@ -157,6 +163,7 @@ export function upsertProfile(input: {
     apiBaseUrl: input.apiBaseUrl?.trim() || existing?.apiBaseUrl || 'http://localhost:8000',
     credential: input.authToken !== undefined ? credentialForToken(id, input.authToken) : existing?.credential,
     dataPath: input.dataPath?.trim() || existing?.dataPath || path.join(app.getPath('userData'), 'profiles', id),
+    workspaceRoot: existing?.workspaceRoot,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
   }
@@ -188,6 +195,24 @@ function getActiveStoredProfile(): StoredDesktopProfile {
 
 export function getActiveProfileCredential(): string {
   return resolveCredential(getActiveStoredProfile())
+}
+
+export function getActiveProfileWorkspaceRoot(): string | null {
+  return getActiveStoredProfile().workspaceRoot?.trim() || null
+}
+
+export function setActiveProfileWorkspaceRoot(rootPath: string | null): void {
+  const state = readPhase6State()
+  const profile = state.profiles.find((item) => item.id === state.activeProfileId)
+  if (!profile) throw new Error('desktop profile not found')
+  const normalized = rootPath?.trim() || null
+  if (normalized === null) {
+    delete profile.workspaceRoot
+  } else {
+    profile.workspaceRoot = normalized
+  }
+  profile.updatedAt = new Date().toISOString()
+  writePhase6State(state)
 }
 
 export function readWindowState(key: string): WindowState | null {
@@ -233,6 +258,14 @@ export function listOfflineTasks(): OfflineTask[] {
   return readPhase6State().offlineTasks
 }
 
+export function nextProjectKnowledgeSnapshotGeneration(rootIdentity: string): number {
+  const state = readPhase6State()
+  const next = (state.projectKnowledgeGenerations[rootIdentity] ?? 0) + 1
+  state.projectKnowledgeGenerations[rootIdentity] = next
+  writePhase6State(state)
+  return next
+}
+
 function stateFilePath(): string {
   return path.join(app.getPath('userData'), 'phase6-state.json')
 }
@@ -254,6 +287,7 @@ function normalizeProfiles(value: unknown, fallback: StoredDesktopProfile[]): St
         apiBaseUrl: String(profile.apiBaseUrl || 'http://localhost:8000'),
         dataPath: String(profile.dataPath || path.join(app.getPath('userData'), 'profiles', id)),
         credential: normalizeCredential(id, profile.credential, authToken),
+        workspaceRoot: typeof profile.workspaceRoot === 'string' ? profile.workspaceRoot : undefined,
         createdAt: String(profile.createdAt || new Date().toISOString()),
         updatedAt: String(profile.updatedAt || new Date().toISOString()),
       }

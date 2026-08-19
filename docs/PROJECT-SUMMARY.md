@@ -1,6 +1,6 @@
 # 项目摘要（AI 快速参考）
 
-_来源：代码、配置、CI、产品规格和已记录验证证据 | 状态：ready | 更新：2026-08-10_
+_来源：代码、配置、CI、产品规格和已记录验证证据 | 状态：ready | 更新：2026-08-17_
 
 > 本文件只保存稳定的项目事实和路径速查，不记录实时任务、临时验证、交接过程或历史证据。当前任务状态以 `TASKS.md` 为准，短期上下文以 `WORKING-CONTEXT.md` 为准。
 
@@ -40,7 +40,7 @@ Harness 是一个私有部署的企业 AI Harness Platform，把基础模型包�
 | Knowledge / Context | `services/api-server/app/knowledge/`、`app/context/` | 文档、检索、记忆、上下文 manifest 和 grounding | 证据必须带来源、策略和 Run 绑定 | 本地证据不足时不能伪造已验证结论 |
 | Tools / MCP / Sandbox | `services/api-server/app/tools/`、`app/sandbox/` | Capability Registry、ToolRunner、策略、沙箱和 WarmPool | 工具执行经过 Policy、Audit、Event | 无 Agent capability attachment 时 fail closed |
 | API / Data / Events | `services/api-server/app/api/`、`app/db/`、`app/events/`、`alembic/` | HTTP、SQLAlchemy、事件溯源、迁移和回放 | API/OpenAPI 与迁移必须同步验证 | PostgreSQL 是生产数据库路径 |
-| Console / Desktop / Mobile | `apps/agent-console/`、`apps/desktop-app/`、`apps/mobile-app/` | 浏览器控制台、桌面工作区、移动同步 | 前端状态来自 API/本地运行时，不放静态业务数据 | 浏览器保留完整数据和观测控制台 |
+| Console / Desktop / Mobile | `apps/agent-console/`、`apps/desktop-app/`、`apps/mobile-app/` | 浏览器控制台、桌面工作区、移动同步 | 前端状态来自 API/本地运行时，不放静态业务数据 | Desktop `/attention` 聚合服务器与本地待处理状态；`/changes` 通过受控 Git IPC、预览 identity 和服务器审计处理本地变更；浏览器保留完整数据和观测控制台 |
 
 ## 5. 开发、验证与交付入口
 
@@ -87,6 +87,7 @@ Harness 是一个私有部署的企业 AI Harness Platform，把基础模型包�
 | 配置说明 | `.env.example`、`services/api-server/.env.example`、`deploy/docker-compose/.env.example`、`docs/project-memory/runbooks/local-development.md` |
 | 架构文档 | `docs/architecture/`（如启用） |
 | 设计文档 | `docs/design/` 或 `DESIGN.md`（如启用） |
+| 功能清单与成熟度 | `docs/development/ai/feature-catalog.json`、`docs/FEATURE-MATRIX.md` |
 | 长期操作记忆 | `docs/project-memory/` |
 | 任务状态 | `docs/TASKS.md` |
 | 当前任务上下文 | `docs/WORKING-CONTEXT.md` |

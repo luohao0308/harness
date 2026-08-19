@@ -39,6 +39,7 @@ def _validate_ai_provider_model(value: str) -> str:
 
 
 class Settings(BaseSettings):
+    trigger_automation_enabled: bool = Field(default=True, alias="TRIGGER_AUTOMATION_ENABLED")
     runtime_profile: str = Field(default="server", alias="RUNTIME_PROFILE")
     runtime_data_dir: Path | None = Field(default=None, alias="RUNTIME_DATA_DIR")
     app_env: str = Field(default="development", alias="APP_ENV")

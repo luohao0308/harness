@@ -6,6 +6,7 @@ from .chunking import *
 from .connectors import *
 from .settings import *
 
+
 def list_knowledge_sources(
     session: Session,
     *,
@@ -41,8 +42,6 @@ def get_visible_knowledge_source(
     ).scalar_one_or_none()
 
 
-
-
 def provider_release_state_matrix() -> dict[str, dict[str, str]]:
     return {
         provider: {
@@ -66,10 +65,11 @@ def normalize_connector_contract(
     connector_metadata: dict | None = None,
 ) -> tuple[dict, dict]:
     provider = (
-        connector_provider
-        or (source_type if source_type in CONNECTOR_SOURCE_TYPES else "")
-    ).strip().lower()
-    if source_type in {"text", "markdown", "document"} and not provider:
+        (connector_provider or (source_type if source_type in CONNECTOR_SOURCE_TYPES else ""))
+        .strip()
+        .lower()
+    )
+    if source_type in {"text", "markdown", "document", "project"} and not provider:
         return {}, {}
     if source_type == "connector" and not provider:
         raise KnowledgeConnectorValidationError(
@@ -78,8 +78,10 @@ def normalize_connector_contract(
     if provider not in CONNECTOR_PROVIDER_RELEASE_MATRIX:
         raise KnowledgeConnectorValidationError(f"unsupported connector provider: {provider}")
     normalized_release = (
-        release_state or str(CONNECTOR_PROVIDER_RELEASE_MATRIX[provider]["release_state"])
-    ).strip().lower()
+        (release_state or str(CONNECTOR_PROVIDER_RELEASE_MATRIX[provider]["release_state"]))
+        .strip()
+        .lower()
+    )
     if normalized_release not in CONNECTOR_RELEASE_STATES:
         raise KnowledgeConnectorValidationError("invalid connector release_state")
     normalized_sync = (sync_mode or "manual").strip().lower()
@@ -93,22 +95,16 @@ def normalize_connector_contract(
             "connector metadata must use secret refs, not raw secrets"
         )
     if _endpoint_has_userinfo(endpoint or uri):
-        raise KnowledgeConnectorValidationError(
-            "connector endpoint must not include credentials"
-        )
+        raise KnowledgeConnectorValidationError("connector endpoint must not include credentials")
     crawler_flags = {"crawl", "crawler", "recursive", "follow_links"}
     if any(flag in metadata for flag in crawler_flags):
         raise KnowledgeConnectorValidationError("crawler-style connector behavior is out of scope")
     if "max_depth" in metadata:
         raise KnowledgeConnectorValidationError("recursive connector depth is out of scope")
     if connector_requires_secret_ref(provider) and not auth_secret_ref:
-        raise KnowledgeConnectorValidationError(
-            f"{provider} connector requires auth_secret_ref"
-        )
+        raise KnowledgeConnectorValidationError(f"{provider} connector requires auth_secret_ref")
     if connector_requires_endpoint(provider) and not (endpoint or uri):
-        raise KnowledgeConnectorValidationError(
-            f"{provider} connector requires endpoint or uri"
-        )
+        raise KnowledgeConnectorValidationError(f"{provider} connector requires endpoint or uri")
     if provider == "postgres" and not (metadata.get("read_only") or metadata.get("policy_bound")):
         raise KnowledgeConnectorValidationError(
             "postgres connector must be read_only or policy_bound"
@@ -522,5 +518,6 @@ def ingest_knowledge_source(
     source.health_status = SOURCE_HEALTH_HEALTHY
     session.flush()
     return source, document, chunks, embeddings
+
 
 __all__ = [name for name in globals() if not name.startswith("__") and name != "annotations"]

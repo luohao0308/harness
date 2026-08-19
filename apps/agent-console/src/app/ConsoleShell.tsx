@@ -232,6 +232,10 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
   const isTeamRoute = /^\/teams(?:\/|$)/.test(location.pathname);
   const isRunRoute = /^\/runs(?:\/|$)/.test(location.pathname);
   const isTerminalRoute = location.pathname === "/terminal";
+  const isAttentionRoute = location.pathname === "/attention";
+  const isChangesRoute = location.pathname === "/changes";
+  const isAutomationsRoute = location.pathname === "/agents"
+    && new URLSearchParams(location.search).get("desktop_panel") === "triggers";
   const isDesktopSettingsRoute = location.pathname === "/desktop" || location.pathname === "/settings/advanced";
   const desktop = isDesktopRuntime();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(isWorkspaceRoute);
@@ -354,7 +358,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
     );
   }
 
-  if (desktop && (isTeamRoute || isRunRoute || isTerminalRoute || isDesktopSettingsRoute)) {
+  if (desktop && (isTeamRoute || isRunRoute || isTerminalRoute || isAttentionRoute || isChangesRoute || isAutomationsRoute || isDesktopSettingsRoute)) {
     return (
       <div
         data-testid="desktop-operation-shell"

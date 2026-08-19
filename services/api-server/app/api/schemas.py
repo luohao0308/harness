@@ -1,8 +1,12 @@
+import hashlib
+import json
+import re
 from datetime import datetime
+from pathlib import PurePosixPath
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ALLOWED_KNOWLEDGE_MIME_TYPES = {"text/plain", "text/markdown"}
 MAX_KNOWLEDGE_IMPORT_BYTES = 120_000
@@ -232,12 +236,15 @@ class AgentTokenOptimizerSelectionResponse(BaseModel):
 class AgentTriggerResponse(BaseModel):
     id: str = Field(description="Trigger ID")
     agent_id: str = Field(description="Agent ID")
-    type: Literal["webhook"] = Field(description="Trigger type")
-    endpoint_path: str = Field(description="Public webhook endpoint path")
+    type: Literal["webhook", "schedule", "file", "git"] = Field(description="Trigger type")
+    name: str = Field(default="", description="Trigger display name")
+    config_json: dict = Field(default_factory=dict)
+    endpoint_path: str | None = Field(default=None, description="Public webhook endpoint path")
     enabled: bool = Field(description="Whether trigger is enabled")
     created_at: datetime = Field(description="Created time")
     updated_at: datetime = Field(description="Updated time")
     last_triggered_at: datetime | None = Field(default=None, description="Last successful trigger")
+    deleted_at: datetime | None = Field(default=None, description="Soft deletion time")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -247,24 +254,166 @@ class AgentTriggerPage(BaseModel):
 
 
 class AgentTriggerCreateRequest(BaseModel):
-    type: Literal["webhook"] = Field(default="webhook", description="Trigger type")
+    type: Literal["webhook", "schedule", "file", "git"] = Field(
+        default="webhook", description="Trigger type"
+    )
+    name: str | None = Field(default=None, max_length=128)
+    config_json: dict = Field(default_factory=dict)
     endpoint_path: str | None = Field(default=None, max_length=128, description="Optional path")
     enabled: bool = Field(default=True, description="Whether trigger starts enabled")
+
+    @model_validator(mode="after")
+    def validate_config(self) -> "AgentTriggerCreateRequest":
+        if self.type != "webhook" and self.endpoint_path is not None:
+            raise ValueError("endpoint_path is only supported for webhook triggers")
+        common = {"goal", "title", "max_attempts"}
+        allowed_by_type = {
+            "webhook": common,
+            "schedule": common | {"interval_seconds"},
+            "file": common
+            | {
+                "workspace_authorization",
+                "workspace_root",
+                "pattern",
+                "max_files",
+                "max_bytes",
+                "max_file_bytes",
+                "max_total_bytes",
+                "max_duration_seconds",
+            },
+            "git": common | {"workspace_authorization", "workspace_root", "repo_root", "branch"},
+        }
+        unknown = set(self.config_json) - allowed_by_type[self.type]
+        if unknown:
+            raise ValueError(
+                f"Unsupported {self.type} trigger config: {', '.join(sorted(unknown))}"
+            )
+        if self.type == "schedule":
+            interval = self.config_json.get("interval_seconds")
+            if (
+                not isinstance(interval, int)
+                or isinstance(interval, bool)
+                or not 5 <= interval <= 86400
+            ):
+                raise ValueError("schedule interval_seconds must be an integer from 5 to 86400")
+        elif self.type == "file":
+            authorization = self.config_json.get("workspace_authorization")
+            root = self.config_json.get("workspace_root")
+            pattern = self.config_json.get("pattern", "**/*")
+            if (
+                (not isinstance(authorization, str) or not authorization.strip())
+                and (not isinstance(root, str) or not root.strip())
+            ):
+                raise ValueError("file workspace_authorization is required")
+            if (
+                not isinstance(pattern, str)
+                or not pattern.strip()
+                or len(pattern) > 255
+                or "\x00" in pattern
+            ):
+                raise ValueError("file pattern must be 1-255 characters")
+            pattern = pattern.replace("\\", "/")
+            pattern_path = PurePosixPath(pattern)
+            if pattern_path.is_absolute() or ".." in pattern_path.parts:
+                raise ValueError("file pattern must be relative and cannot contain '..'")
+            self.config_json["pattern"] = pattern
+            max_files = self.config_json.get("max_files", 1000)
+            if (
+                not isinstance(max_files, int)
+                or isinstance(max_files, bool)
+                or not 1 <= max_files <= 10000
+            ):
+                raise ValueError("file max_files must be an integer from 1 to 10000")
+            max_file_bytes = self.config_json.get(
+                "max_file_bytes", self.config_json.get("max_bytes", 1024 * 1024)
+            )
+            if (
+                not isinstance(max_file_bytes, int)
+                or isinstance(max_file_bytes, bool)
+                or not 1 <= max_file_bytes <= 8 * 1024 * 1024
+            ):
+                raise ValueError("file max_file_bytes must be an integer from 1 to 8388608")
+            max_total_bytes = self.config_json.get("max_total_bytes", 4 * 1024 * 1024)
+            if (
+                not isinstance(max_total_bytes, int)
+                or isinstance(max_total_bytes, bool)
+                or not max_file_bytes <= max_total_bytes <= 64 * 1024 * 1024
+            ):
+                raise ValueError("file max_total_bytes must be between max_file_bytes and 67108864")
+            max_duration = self.config_json.get("max_duration_seconds", 2.0)
+            if (
+                not isinstance(max_duration, (int, float))
+                or isinstance(max_duration, bool)
+                or not 0.01 <= max_duration <= 10
+            ):
+                raise ValueError("file max_duration_seconds must be from 0.01 to 10")
+        elif self.type == "git":
+            authorization = self.config_json.get("workspace_authorization")
+            workspace_root = self.config_json.get("workspace_root")
+            repo_root = self.config_json.get("repo_root")
+            branch = self.config_json.get("branch")
+            if (
+                (not isinstance(authorization, str) or not authorization.strip())
+                and (not isinstance(workspace_root, str) or not workspace_root.strip())
+                and (not isinstance(repo_root, str) or not repo_root.strip())
+            ):
+                raise ValueError("git workspace_authorization is required")
+            if branch is not None and (
+                not isinstance(branch, str) or not branch.strip() or len(branch) > 255
+            ):
+                raise ValueError("git branch must be 1-255 characters")
+            if branch is not None and not re.fullmatch(r"[A-Za-z0-9._/-]+", branch):
+                raise ValueError("git branch contains unsupported characters")
+        text_limits = {"goal": 4096, "title": 256}
+        for field_name, max_length in text_limits.items():
+            value = self.config_json.get(field_name)
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"{field_name} must be a non-empty string")
+            if isinstance(value, str) and len(value) > max_length:
+                raise ValueError(f"{field_name} cannot exceed {max_length} characters")
+        max_attempts = self.config_json.get("max_attempts", 3)
+        if (
+            not isinstance(max_attempts, int)
+            or isinstance(max_attempts, bool)
+            or not 1 <= max_attempts <= 10
+        ):
+            raise ValueError("max_attempts must be an integer from 1 to 10")
+        return self
 
 
 class AgentTriggerCreateResponse(BaseModel):
     trigger: AgentTriggerResponse = Field(description="Created trigger")
-    secret: str = Field(description="Plaintext secret shown once")
+    secret: str | None = Field(default=None, description="Webhook secret shown once")
 
 
 class AgentTriggerUpdateRequest(BaseModel):
     enabled: bool | None = Field(default=None, description="Whether trigger is enabled")
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    config_json: dict | None = Field(default=None)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("name must not be blank")
+        return normalized
 
 
 class WebhookTriggerRequest(BaseModel):
-    goal: str | None = Field(default=None, description="Run goal override")
-    title: str | None = Field(default=None, description="Run title")
+    goal: str | None = Field(default=None, max_length=4096, description="Run goal override")
+    title: str | None = Field(default=None, max_length=256, description="Run title")
     payload: dict = Field(default_factory=dict, description="External webhook payload")
+
+    @field_validator("payload")
+    @classmethod
+    def validate_payload_size(cls, value: dict) -> dict:
+        encoded = json.dumps(value, sort_keys=True, default=str).encode("utf-8")
+        if len(encoded) > 1024 * 1024:
+            raise ValueError("webhook payload cannot exceed 1048576 bytes")
+        return value
 
 
 class WebhookTriggerResponse(BaseModel):
@@ -272,6 +421,29 @@ class WebhookTriggerResponse(BaseModel):
     agent_id: str = Field(description="Agent ID")
     status: str = Field(description="Run status")
     trigger_id: str = Field(description="Trigger ID")
+    invocation_id: str | None = Field(default=None)
+
+
+class TriggerInvocationResponse(BaseModel):
+    id: str
+    trigger_id: str
+    idempotency_key: str | None = None
+    config_summary_json: dict = Field(default_factory=dict)
+    payload_summary_json: dict = Field(default_factory=dict)
+    status: str
+    run_id: str | None = None
+    error: str | None = None
+    attempt: int
+    created_at: datetime
+    updated_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TriggerInvocationPage(BaseModel):
+    items: list[TriggerInvocationResponse]
 
 
 class AgentSessionCreateRequest(BaseModel):
@@ -1011,6 +1183,234 @@ class KnowledgeSourceResponse(BaseModel):
 class KnowledgeSourcePage(BaseModel):
     items: list[KnowledgeSourceResponse] = Field(description="知识源列表")
     next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class ProjectKnowledgeIndexCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120, description="项目知识索引名称")
+    description: str = Field(default="", max_length=1_000, description="项目知识索引说明")
+    desktop_profile_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+        description="Desktop profile 的非路径稳定标识",
+    )
+    root_identity: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+        description="由受信 Desktop 计算的 workspace root identity",
+    )
+    ignore_patterns: list[str] = Field(
+        default_factory=list,
+        max_length=64,
+        description="仅追加排除的相对 glob 规则",
+    )
+    idempotency_key: str | None = Field(default=None, max_length=200, description="幂等键")
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("ignore_patterns")
+    @classmethod
+    def validate_ignore_patterns(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for raw_pattern in value:
+            pattern = raw_pattern.strip().replace("\\", "/")
+            if not pattern or len(pattern) > 240:
+                raise ValueError("ignore patterns must contain 1 to 240 characters")
+            parts = PurePosixPath(pattern).parts
+            if pattern.startswith("/") or ".." in parts or "\x00" in pattern:
+                raise ValueError("ignore patterns must be relative and cannot traverse parents")
+            if pattern not in normalized:
+                normalized.append(pattern)
+        return normalized
+
+
+class ProjectKnowledgeIndexActionRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=500, description="操作原因")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ProjectKnowledgeSnapshotFile(BaseModel):
+    relative_path: str = Field(min_length=1, max_length=1_000, description="项目内相对路径")
+    status: Literal["ready", "skipped"] = Field(description="Desktop 扫描状态")
+    content: str | None = Field(default=None, description="UTF-8 文本内容")
+    content_sha256: str | None = Field(
+        default=None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+        description="原文件 UTF-8 bytes 哈希",
+    )
+    size_bytes: int = Field(ge=0, le=2_147_483_647, description="文件大小")
+    modified_at: datetime = Field(description="Desktop 观察到的修改时间")
+    mime_type: str | None = Field(default=None, max_length=120, description="MIME type")
+    skip_reason: (
+        Literal[
+            "symlink",
+            "file_too_large",
+            "invalid_utf8",
+            "changed_during_scan",
+            "read_failed",
+        ]
+        | None
+    ) = Field(default=None, description="跳过原因")
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("relative_path")
+    @classmethod
+    def validate_relative_path(cls, value: str) -> str:
+        if "\\" in value or "\x00" in value or value.startswith("/"):
+            raise ValueError("relative_path must be a normalized project-relative path")
+        normalized = str(PurePosixPath(value))
+        if normalized in {"", "."} or ".." in PurePosixPath(value).parts or normalized != value:
+            raise ValueError("relative_path must be a normalized project-relative path")
+        return value
+
+    @model_validator(mode="after")
+    def validate_content_contract(self) -> "ProjectKnowledgeSnapshotFile":
+        if self.status == "ready":
+            if self.content is None or self.content_sha256 is None or self.skip_reason is not None:
+                raise ValueError("ready files require content/hash and cannot have skip_reason")
+            raw = self.content.encode("utf-8")
+            if len(raw) > 120_000 or len(raw) != self.size_bytes:
+                raise ValueError("ready file size must match UTF-8 content within 120000 bytes")
+            if hashlib.sha256(raw).hexdigest() != self.content_sha256:
+                raise ValueError("content_sha256 does not match content")
+        elif (
+            self.content is not None or self.content_sha256 is not None or self.skip_reason is None
+        ):
+            raise ValueError("skipped files require skip_reason and cannot include content/hash")
+        return self
+
+
+class ProjectKnowledgeSnapshotError(BaseModel):
+    path: str = Field(min_length=1, max_length=1_000, description="失败的相对路径")
+    reason: str = Field(min_length=1, max_length=120, description="安全错误码")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ProjectKnowledgeSyncRequest(BaseModel):
+    schema_version: Literal[
+        "desktop-project-knowledge-snapshot-v1",
+        "desktop-project-knowledge-snapshot-v2",
+    ]
+    default_ignore_version: Literal["v1"]
+    desktop_profile_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    root_identity: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    snapshot_cursor: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    snapshot_generation: int | None = Field(
+        default=None,
+        ge=1,
+        description="Desktop Profile 持久扫描代次",
+    )
+    complete: bool
+    truncated: bool
+    truncation_reason: (
+        Literal[
+            "max_files",
+            "max_total_bytes",
+            "max_duration",
+            "scan_error",
+        ]
+        | None
+    ) = None
+    files: list[ProjectKnowledgeSnapshotFile] = Field(max_length=5_000)
+    errors: list[ProjectKnowledgeSnapshotError] = Field(default_factory=list, max_length=100)
+    scanned_files: int = Field(ge=0, le=5_000)
+    indexed_files: int = Field(ge=0, le=5_000)
+    total_bytes: int = Field(ge=0, le=16 * 1024 * 1024)
+    started_at: datetime
+    completed_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_snapshot_contract(self) -> "ProjectKnowledgeSyncRequest":
+        if self.complete:
+            if self.truncated or self.truncation_reason is not None or self.errors:
+                raise ValueError("complete snapshots cannot be truncated or contain scan errors")
+        elif not self.truncated or self.truncation_reason is None:
+            raise ValueError("incomplete snapshots require truncation metadata")
+        paths = [item.relative_path for item in self.files]
+        if len(paths) != len(set(paths)):
+            raise ValueError("snapshot files must have unique relative paths")
+        ready_files = [item for item in self.files if item.status == "ready"]
+        if self.indexed_files != len(ready_files):
+            raise ValueError("indexed_files does not match ready snapshot files")
+        if self.total_bytes != sum(item.size_bytes for item in ready_files):
+            raise ValueError("total_bytes does not match ready snapshot files")
+        if self.scanned_files < len(self.files):
+            raise ValueError("scanned_files cannot be smaller than returned files")
+        if self.completed_at < self.started_at:
+            raise ValueError("completed_at cannot be earlier than started_at")
+        return self
+
+
+class ProjectKnowledgeFileResponse(BaseModel):
+    id: str = Field(description="项目文件收据 ID")
+    index_id: str = Field(description="项目知识索引 ID")
+    relative_path: str = Field(description="项目内相对路径")
+    path_sha256: str = Field(description="相对路径哈希")
+    content_sha256: str | None = Field(default=None, description="内容哈希")
+    size_bytes: int | None = Field(default=None, description="文件大小")
+    mime_type: str | None = Field(default=None, description="MIME type")
+    knowledge_document_id: str | None = Field(default=None, description="当前知识文档 ID")
+    document_version: int | None = Field(default=None, description="当前知识文档版本")
+    status: Literal["PENDING", "INDEXED", "STALE", "TOMBSTONED", "IGNORED", "ERROR"]
+    last_seen_generation: int = Field(description="最后完整快照代次")
+    last_scanned_at: datetime | None = Field(default=None, description="最后扫描时间")
+    tombstoned_at: datetime | None = Field(default=None, description="标记删除时间")
+    last_error: str | None = Field(default=None, description="最后错误")
+    created_at: datetime = Field(description="创建时间")
+    updated_at: datetime = Field(description="更新时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProjectKnowledgeIndexResponse(BaseModel):
+    id: str = Field(description="项目知识索引 ID")
+    organization_id: str = Field(description="组织 ID")
+    agent_id: str = Field(description="Agent ID")
+    knowledge_source_id: str = Field(description="关联 Knowledge Source ID")
+    desktop_profile_id: str = Field(description="Desktop profile 稳定标识")
+    root_identity: str = Field(description="不含绝对路径的 root identity")
+    name: str = Field(description="项目知识索引名称")
+    description: str = Field(description="项目知识索引说明")
+    status: Literal["ACTIVE", "PAUSED", "ERROR", "UNBOUND"]
+    ignore_patterns: list[str] = Field(description="用户追加忽略规则")
+    snapshot_generation: int = Field(description="最后完整快照代次")
+    snapshot_cursor: str | None = Field(default=None, description="最后完整快照游标")
+    file_count: int = Field(default=0, description="已知文件收据数")
+    indexed_file_count: int = Field(default=0, description="已索引文件数")
+    error_file_count: int = Field(default=0, description="失败文件数")
+    last_snapshot_at: datetime | None = Field(
+        default=None,
+        description="最后已接受扫描的开始时间，用于拒绝乱序快照",
+    )
+    last_sync_at: datetime | None = Field(default=None, description="最后同步时间")
+    last_error: str | None = Field(default=None, description="最后索引错误")
+    unbound_at: datetime | None = Field(default=None, description="解绑时间")
+    created_at: datetime = Field(description="创建时间")
+    updated_at: datetime = Field(description="更新时间")
+
+
+class ProjectKnowledgeIndexPage(BaseModel):
+    items: list[ProjectKnowledgeIndexResponse] = Field(description="项目知识索引列表")
 
 
 class KnowledgeRetrievalHitResponse(BaseModel):

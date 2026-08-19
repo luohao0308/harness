@@ -6,6 +6,7 @@ import { recordDesktopStartupReport } from './services/desktop-telemetry'
 // Defer desktop-updates import to avoid module-level app.getVersion() call
 // import { checkForDesktopUpdates, registerDesktopUpdateHandlers } from './services/desktop-updates'
 import { registerFileHandlers } from './services/file-service'
+import { registerChangeReviewHandlers } from './services/change-review-service'
 import { registerRendererWorkspaceStorageHandlers } from './services/renderer-workspace-storage'
 import { startDesktopOfflineSyncRuntime } from './services/offline-sync-runtime'
 import { registerPhase6Handlers } from './services/phase6-service'
@@ -132,13 +133,21 @@ if (ownsSingleInstance) app.whenReady().then(async () => {
   registerEarlyProtocolHandlers()
 
   registerAgentHandlers()
-  registerFileHandlers()
+  registerFileHandlers({
+    authorizeWorkspace: async (profileId, rootPath) => {
+      const startupError = await runtimeStartup
+      if (startupError) throw startupError
+      if (!localRuntimeManager) throw new Error('managed local runtime is unavailable')
+      return localRuntimeManager.authorizeWorkspace(profileId, rootPath)
+    },
+  })
+  registerChangeReviewHandlers()
   registerRendererWorkspaceStorageHandlers()
   registerPhase6Handlers()
   registerTaskHandlers()
-  if (!managedLocalRuntime) {
-    startDesktopOfflineSyncRuntime()
-  }
+  // The offline runtime owns both sync scheduling and offline-agent IPC. It is
+  // safe to start in managed mode because registration/resources are local.
+  startDesktopOfflineSyncRuntime({ enableBackgroundSync: !managedLocalRuntime })
   registerDesktopWindowHandlers()
   registerSystemIntegration({
     getMainWindow: () => mainWindow,

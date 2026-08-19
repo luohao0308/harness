@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-05-23T11:28:14Z",
+  "updated_at": "2026-08-17T00:00:00Z",
   "purpose": "Low-token task-to-context routing for new agent sessions.",
   "entrypoint": "docs/development/ai/agent-startup-context.md",
   "machine_progress": "docs/development/ai/task-progress.yaml",
@@ -47,6 +47,40 @@
         "docs/development/ai/task-progress.yaml",
         "omx_wiki/session-2026-05-23-agent-startup-context-loop.md",
         "omx_wiki/index.md",
+        "omx_wiki/log.md"
+      ]
+    },
+    {
+      "id": "feature-catalog",
+      "summary": "Full feature inventory, implementation state, production maturity, evidence paths, known gaps, generated matrix, and task matching.",
+      "keywords": [
+        "feature catalog",
+        "feature matrix",
+        "feature status",
+        "implementation status",
+        "production readiness",
+        "maturity",
+        "功能清单",
+        "功能矩阵",
+        "功能进度",
+        "生产成熟度",
+        "生产就绪",
+        "功能目录"
+      ],
+      "read_first": [
+        "docs/development/ai/feature-catalog.json",
+        "docs/FEATURE-MATRIX.md",
+        "docs/PROJECT-SUMMARY.md"
+      ],
+      "deep_read": [
+        "docs/development/ai/feature-catalog.schema.json",
+        "scripts/feature_catalog.py",
+        "docs/contracts/SPEC-INDEX.md"
+      ],
+      "progress_write_targets": [
+        "docs/development/ai/task-progress.yaml",
+        "docs/TASKS.md",
+        "omx_wiki/project-handoff-current-state.md",
         "omx_wiki/log.md"
       ]
     },

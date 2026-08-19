@@ -16,6 +16,14 @@ import { SQLiteTaskStore } from '../stores/sqlite-task-store'
 import type { OfflineQueue } from '../stores/offline-queue'
 import type { TaskStore } from '../stores/task-store'
 import type { TaskWithSyncMetadata } from '../stores/types'
+import { SQLiteOfflineAgentStore } from '../stores/sqlite-offline-agent-store'
+import { OfflineAgentRuntime } from './offline-agent-runtime'
+import type {
+  DesktopOfflineAgentRun,
+  DesktopOfflineAgentRunInput,
+  DesktopOfflineAgentSnapshot,
+} from './offline-agent-types'
+import { getActiveProfileWorkspaceRoot, getLocalModelSettings } from './phase6-store'
 
 export type DesktopSyncRuntimeState =
   | 'idle'
@@ -52,6 +60,8 @@ type RuntimeResources = {
   offlineQueue: OfflineQueue
   syncMetadata: SQLiteSyncMetadata
   syncService: SQLiteSyncService
+  offlineAgentStore?: SQLiteOfflineAgentStore
+  offlineAgentRuntime?: OfflineAgentRuntime
 }
 
 export type DesktopOfflineSyncRuntimeOptions = {
@@ -62,6 +72,7 @@ export type DesktopOfflineSyncRuntimeOptions = {
   initialBackoffMs?: number
   maxBackoffMs?: number
   maxRetryAttempts?: number
+  enableBackgroundSync?: boolean
 }
 
 const DEFAULT_INITIAL_BACKOFF_MS = 1_000
@@ -79,6 +90,7 @@ export class DesktopOfflineSyncRuntime {
   private retryAttempt = 0
   private registeredIpc = false
   private closed = false
+  private inFlightSync: Promise<DesktopSyncRuntimeStatus> | null = null
 
   private getActiveProfile: () => DesktopProfile
   private listOfflineTasks: () => OfflineTask[]
@@ -87,6 +99,7 @@ export class DesktopOfflineSyncRuntime {
   private initialBackoffMs: number
   private maxBackoffMs: number
   private maxRetryAttempts: number
+  private enableBackgroundSync: boolean
 
   constructor(options: DesktopOfflineSyncRuntimeOptions = {}) {
     this.getActiveProfile = options.getActiveProfile ?? getActiveProfile
@@ -96,12 +109,13 @@ export class DesktopOfflineSyncRuntime {
     this.initialBackoffMs = options.initialBackoffMs ?? DEFAULT_INITIAL_BACKOFF_MS
     this.maxBackoffMs = options.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS
     this.maxRetryAttempts = options.maxRetryAttempts ?? DEFAULT_MAX_RETRY_ATTEMPTS
+    this.enableBackgroundSync = options.enableBackgroundSync ?? true
   }
 
   start(): void {
     if (this.closed) return
     this.registerIpcHandlers()
-    this.networkMonitor.start(() => {
+    if (this.enableBackgroundSync) this.networkMonitor.start(() => {
       this.retryAttempt = 0
       this.scheduleSync(0)
     })
@@ -110,7 +124,7 @@ export class DesktopOfflineSyncRuntime {
       return
     }
 
-    if (this.networkMonitor.isOnline()) {
+    if (this.enableBackgroundSync && this.networkMonitor.isOnline()) {
       this.scheduleSync(0)
     }
   }
@@ -126,9 +140,53 @@ export class DesktopOfflineSyncRuntime {
       'offline:promote-result-to-pending-agent-task',
       (_event, offlineTaskId: string) => this.promoteOfflineResultToPendingAgentTask(offlineTaskId)
     )
+    ipcMain.handle('offline-agent:list-runs', (_event, limit?: number) => ({
+      items: this.requireOfflineAgentRuntime().listRuns(limit),
+    }))
+    ipcMain.handle('offline-agent:get-run', (_event, runId: string) => {
+      return this.requireOfflineAgentRuntime().getRun(runId)
+    })
+    ipcMain.handle('offline-agent:run', async (_event, input: DesktopOfflineAgentRunInput) => {
+      const run = await this.requireOfflineAgentRuntime().run(input)
+      this.scheduleTerminalRunSync(run)
+      return run
+    })
+    ipcMain.handle('offline-agent:cancel', (_event, runId: string) => {
+      const run = this.requireOfflineAgentRuntime().cancel(runId)
+      this.scheduleTerminalRunSync(run)
+      return run
+    })
+    ipcMain.handle('offline-agent:resume', async (_event, runId: string) => {
+      const run = await this.requireOfflineAgentRuntime().resume(runId)
+      this.scheduleTerminalRunSync(run)
+      return run
+    })
+    ipcMain.handle(
+      'offline-agent:decide-approval',
+      async (_event, approvalId: string, approved: boolean) => {
+        const run = await this.requireOfflineAgentRuntime().decideApproval(approvalId, approved)
+        this.scheduleTerminalRunSync(run)
+        return run
+      },
+    )
   }
 
-  async runNow(): Promise<DesktopSyncRuntimeStatus> {
+  runNow(): Promise<DesktopSyncRuntimeStatus> {
+    if (this.inFlightSync) return this.inFlightSync
+    const syncPromise = this.runNowInternal()
+    this.inFlightSync = syncPromise
+    void syncPromise.then(
+      () => {
+        if (this.inFlightSync === syncPromise) this.inFlightSync = null
+      },
+      () => {
+        if (this.inFlightSync === syncPromise) this.inFlightSync = null
+      },
+    )
+    return syncPromise
+  }
+
+  private async runNowInternal(): Promise<DesktopSyncRuntimeStatus> {
     if (this.closed) return this.getStatus()
     if (!this.networkMonitor.isOnline()) {
       this.lastError = 'network offline'
@@ -323,6 +381,8 @@ export class DesktopOfflineSyncRuntime {
 
   private closeResources(): void {
     if (!this.resources) return
+    this.resources.offlineAgentRuntime?.close()
+    this.resources.offlineAgentStore?.close()
     this.resources.offlineQueue.close()
     this.resources.taskStore.close()
     this.resources.syncMetadata.close()
@@ -334,6 +394,21 @@ export class DesktopOfflineSyncRuntime {
       throw new Error('desktop sync runtime is not initialized')
     }
     return this.resources
+  }
+
+  private requireOfflineAgentRuntime(): OfflineAgentRuntime {
+    if (!this.tryEnsureResourcesForActiveProfile()) {
+      throw new Error(this.lastError ?? 'desktop sync runtime is not initialized')
+    }
+    const runtime = this.requireResources().offlineAgentRuntime
+    if (!runtime) throw new Error('offline agent runtime is not initialized')
+    return runtime
+  }
+
+  private scheduleTerminalRunSync(run: DesktopOfflineAgentRun): void {
+    if (!['COMPLETED', 'FAILED', 'CANCELLED'].includes(run.status)) return
+    this.publishStatus()
+    if (this.networkMonitor.isOnline()) this.scheduleSync(0)
   }
 
   private getConflictCount(resources: RuntimeResources | null): number {
@@ -376,10 +451,30 @@ export function createRuntimeResources(profile: DesktopProfile): RuntimeResource
   const offlineQueue = new SQLiteOfflineQueue(dbPath)
   const metadataDb = new Database(dbPath)
   const syncMetadata = new SQLiteSyncMetadata(metadataDb)
+  const offlineAgentStore = new SQLiteOfflineAgentStore(dbPath)
 
   taskStore.initialize()
   offlineQueue.initialize()
   syncMetadata.initialize()
+  offlineAgentStore.initialize()
+
+  const enqueueOfflineAgentSnapshot = (snapshot: DesktopOfflineAgentSnapshot): void => {
+    offlineQueue.enqueue({
+      operation_type: 'CREATE',
+      operation_id: `offline-agent:${snapshot.run.id}:${snapshot.run.syncRevision}`,
+      entity_type: 'offline_agent_run',
+      entity_id: snapshot.run.id,
+      payload_json: JSON.stringify(snapshot),
+      client_timestamp: snapshot.run.updatedAt,
+    })
+  }
+  const offlineAgentRuntime = new OfflineAgentRuntime({
+    store: offlineAgentStore,
+    getLocalModelSettings,
+    getWorkspaceRoot: getActiveProfileWorkspaceRoot,
+    onTerminalSnapshot: enqueueOfflineAgentSnapshot,
+  })
+  offlineAgentRuntime.recoverInterruptedRuns()
 
   return {
     profile,
@@ -387,6 +482,8 @@ export function createRuntimeResources(profile: DesktopProfile): RuntimeResource
     taskStore,
     offlineQueue,
     syncMetadata,
+    offlineAgentStore,
+    offlineAgentRuntime,
     syncService: new SQLiteSyncService('', offlineQueue, taskStore, syncMetadata, {
       requestJson: apiRequest,
     }),
@@ -443,9 +540,9 @@ class ElectronPollingNetworkMonitor implements NetworkMonitor {
 
 let offlineSyncRuntime: DesktopOfflineSyncRuntime | null = null
 
-export function startDesktopOfflineSyncRuntime(): DesktopOfflineSyncRuntime {
+export function startDesktopOfflineSyncRuntime(options: DesktopOfflineSyncRuntimeOptions = {}): DesktopOfflineSyncRuntime {
   if (!offlineSyncRuntime) {
-    offlineSyncRuntime = new DesktopOfflineSyncRuntime()
+    offlineSyncRuntime = new DesktopOfflineSyncRuntime(options)
     offlineSyncRuntime.start()
     app.on('before-quit', () => {
       offlineSyncRuntime?.close()

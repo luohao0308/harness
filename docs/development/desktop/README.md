@@ -50,6 +50,7 @@ The desktop first screen must answer:
 | Profile isolation | Separate API base URL, auth token, and data path per workspace/account | `desktopApi.profile`, `phase6-store`, shared API resolver | Save, switch, and broadcast `profile:changed` |
 | Independent Run windows | Review Runs without losing the main workbench | `desktopApi.window`, `window-manager` | `openRun(runId)` opens/focuses persisted Run window |
 | Offline simple tasks | Keep useful local work available without network access | `desktopApi.offline`, `phase6-service` | Deterministic task completes; optional local model fails soft |
+| Complete offline Agent | Run an auditable local Agent with restricted workspace tools while disconnected | `desktopApi.offlineAgent`, `OfflineAgentRuntime`, Profile-scoped `offline-sync.sqlite` | Run state, model/tool/approval evidence, cancellation and recovery persist; reconnect imports one canonical evidence graph idempotently |
 | Local model settings | Use Ollama or OpenAI-compatible local endpoints | `desktopApi.localModel` | Settings round-trip; fallback output remains deterministic when unavailable |
 | File bridge | Root-scoped local file list/read/write/watch | `desktopApi.file`, `file-service` | Root selection is explicit; file operations stay under selected root |
 | System integration | Tray, close-to-tray, login startup, shortcut, native menu, notifications, deep links | `desktopApi.system`, `system-integration` | Route events normalize to console routes; notifications click through |
@@ -57,6 +58,27 @@ The desktop first screen must answer:
 | Feedback and metrics | Beta feedback, startup timing, crash and sync health | `desktopApi.feedback`, desktop telemetry endpoints, Sentry | Feedback submits; metric summary reports startup/crash/sync evidence |
 | Startup performance | Keep packaged launch latency within explicit phase and total budgets | `startup-performance`, `check-startup-budget.mjs`, Release matrix | Five isolated packaged samples produce P50/P95 evidence; every P95 stays within budget |
 | Packaging | macOS, Windows, Linux release artifacts | `electron-builder.yml`, `.github/workflows/release.yml` | Local `--dir` package passes; CI signs/notarizes when secrets exist |
+
+### Complete Offline Agent Contract
+
+The complete offline Agent is available from the Desktop advanced-features
+surface and is separate from the retained deterministic simple-task fallback.
+Each Desktop Profile owns its runs and evidence in `offline-sync.sqlite`.
+Restart recovery marks unfinished work as interrupted, while cancellation,
+approval decisions, resume, and terminal results remain durable.
+
+The first restricted tool set is intentionally small:
+
+- `workspace.list_files` and `workspace.read_text` are root-confined read tools.
+- `workspace.write_text` is high risk and always waits for explicit approval.
+- Tool requests enter through typed preload IPC. Model text and tool output are
+  untrusted content and are never parsed into executable tool requests.
+
+Terminal snapshots enter the existing offline queue as `offline_agent_run`.
+After reconnect, the API imports their stable UUIDs into the canonical Task,
+AgentRun, AgentEvent, ModelCall, ToolCall, and ToolApproval graph. Replays are
+idempotent; malformed snapshots become visible sync conflicts instead of being
+silently acknowledged.
 
 ## Local Startup
 
@@ -282,6 +304,9 @@ Desktop must keep native trust boundaries visible:
   replicas; production must fail closed when Redis is unavailable.
 - Local model endpoints are optional. Failure to reach them must fall back to
   deterministic offline output without blocking the workbench.
+- Complete offline Agent tools remain allowlisted and root-scoped. File writes
+  always require an explicit local approval, and model output never gains tool
+  authority.
 
 ## Support Playbook
 

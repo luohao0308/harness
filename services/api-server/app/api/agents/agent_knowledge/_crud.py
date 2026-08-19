@@ -12,6 +12,7 @@ from .._tool_helpers import *
 from .._workspace_chat_helpers import *
 from .._workspace_response_helpers import *
 
+
 @router.get(
     "/{agent_id}/knowledge/sources",
     response_model=KnowledgeSourcePage,
@@ -184,6 +185,7 @@ def update_agent_knowledge_source(
         agent_id=agent_id,
         source_id=source_id,
     )
+    _require_unmanaged_knowledge_source(session=session, source=source)
     _require_org_source_admin(source=source, principal=principal)
     before = knowledge_source_lifecycle_snapshot(source)
     if request.name is not None:
@@ -197,8 +199,7 @@ def update_agent_knowledge_source(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    "connector_settings_json can only be updated for connector "
-                    "knowledge sources"
+                    "connector_settings_json can only be updated for connector knowledge sources"
                 ),
             )
         try:
@@ -349,6 +350,7 @@ def change_agent_knowledge_source_scope(
         agent_id=agent_id,
         source_id=source_id,
     )
+    _require_unmanaged_knowledge_source(session=session, source=source)
     before = knowledge_source_lifecycle_snapshot(source)
     next_agent_id = None if request.scope == "org" else agent_id
     source.agent_id = next_agent_id

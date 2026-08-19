@@ -70,6 +70,10 @@ describe("enterprise route inventory", () => {
       expect(routerPaths).toContain(path);
     }
   });
+
+  it("keeps the desktop attention route registered", () => {
+    expect(routePathsFromRouter()).toContain("/attention");
+  });
 });
 
 function routePathsFromRouter() {

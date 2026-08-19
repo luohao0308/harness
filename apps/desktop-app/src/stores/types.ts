@@ -33,8 +33,9 @@ export interface TaskWithSyncMetadata extends Task {
 
 export interface SyncOperation {
   id?: number
+  operation_id?: string
   operation_type: 'CREATE' | 'UPDATE' | 'DELETE'
-  entity_type: 'task'
+  entity_type: 'task' | 'offline_agent_run'
   entity_id: string
   payload_json: string
   client_timestamp: string
@@ -46,7 +47,7 @@ export interface SyncOperation {
 
 export interface SyncConflict {
   id?: number
-  entity_type: 'task'
+  entity_type: 'task' | 'offline_agent_run'
   entity_id: string
   field_name: string
   local_value: string

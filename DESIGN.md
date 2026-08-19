@@ -2,13 +2,16 @@
 
 ## Source of truth
 - Status: Active
-- Last refreshed: 2026-08-13
+- Last refreshed: 2026-08-18
 - Primary product surfaces:
   - `hao` 本地 Agent CLI / TUI 的单输入、slash command、工具输出和权限提示
   - 全局 Console Shell 侧边栏与页面标题中文术语
   - `/tools` MCP / Skill 商店与能力安装流程
   - `/agents` Agent Studio 内的知识管理与能力配置弹窗
   - `/agents/:agentId/workspace` 会话级确认操作
+  - `/attention` Electron 统一待处理中心，聚合审批、异常 Run、Team 阻塞和本地同步/Runtime 问题
+  - `/changes` Electron 原生变更审查工作区，在受控工作区根目录内读取 Git 状态、文件 Diff，并通过显式确认处理分块变更
+  - `/agents?desktop_panel=triggers` Desktop 自动化管理，创建和启停 Webhook、定时、文件与 Git Trigger，并追溯 invocation 与 Run
   - `/teams/:teamId` 网页多列团队会话，以及桌面协作、任务图和多列工作区
   - `/runs/:runId` 运行详情中的依据审计、上下文组装与标记节省说明
   - `/observability` 依据质量与标记节省指标总览
@@ -29,6 +32,10 @@
   - `apps/agent-console/src/features/agents/components/KnowledgeManagementPanel.tsx`
   - `apps/agent-console/src/features/agents/components/ChatSurface.tsx`
   - `apps/agent-console/src/features/agents/pages/AgentWorkspacePage.tsx`
+  - `apps/agent-console/src/components/desktop/DesktopOperationRail.tsx`
+  - `apps/agent-console/src/features/tasks/api.ts`
+  - `services/api-server/app/api/desktop_sync.py`
+  - `services/api-server/app/db/models.py`
   - `apps/agent-console/src/features/teams/pages/TeamPage.tsx`
   - `apps/agent-console/src/features/teams/pages/TeamPage/TeamHeader.tsx`
   - `apps/agent-console/src/features/teams/pages/TeamPage/TeamWorkspaceSurface.tsx`
@@ -49,6 +56,7 @@
   - `apps/desktop-app/src/main.ts`
   - `apps/desktop-app/src/preload.ts`
   - `apps/desktop-app/src/preload-api.ts`
+  - `apps/desktop-app/src/services/offline-sync-runtime.ts`
   - `apps/desktop-app/src/services/phase6-service.ts`
   - `apps/desktop-app/src/services/window-manager.ts`
   - `apps/desktop-app/src/services/system-integration.ts`
@@ -100,6 +108,9 @@
   - 明确桌面与网页分工：Electron 用于创建任务、团队协作、终端操作、工作区文件和运行审批；网页用于配置、统计、审计、评测和观测。
   - 让桌面版文档达到生产可用：开发、测试、打包、签名、公证、更新、反馈、遥测、排障都有明确入口和验收口径。
   - 让桌面 Team Mode 默认先回答“团队整体进行得怎样”，需要判断细节时再进入单 Agent 完整对话；任务依赖图和现有多列视图继续保留。
+  - 让桌面用户在一个“待处理”入口完成需要人工判断的工作，而不必逐个打开 Run、Team 或同步状态查找异常。
+  - 让桌面用户不离开当前工作区即可审查普通、未跟踪、二进制和冲突变更，并安全执行分块暂存、取消暂存或撤销。
+  - 让桌面用户用定时、Webhook 或受控本地文件/Git 变化自动启动 Run，并能暂停来源、查看最近调用和回到 Run 证据。
   - 将所有关键交互改成中文、可解释、可回溯的反馈。
   - 统一确认弹窗与操作成功/失败提示，降低误操作焦虑。
   - 在移动端提供离线优先的任务查看、新建、完成和同步恢复路径。
@@ -123,6 +134,10 @@
   - “专注”模式能显示单 Agent 完整消息流与 composer，并可按需打开任务详情或依赖图；返回“协作”后保留原概览筛选和选中成员。
   - 点击桌面“团队”后，有现有团队时直接进入最近可用团队；没有团队时直接显示创建入口，不经过网页版管理壳层。
   - 桌面任一操作页都能一键返回任务、团队、终端、文件和审批，不出现网页控制台的双重侧栏。
+  - 桌面任一操作页都能一键进入“待处理”；审批可以直接批准/拒绝，其他异常提供通向原权威对象或恢复动作的明确入口。
+  - 桌面变更审查先显示工作区与文件状态，再显示选中文件的稳定 Diff；任何写动作都必须基于当前预览、明确命名影响并要求确认。
+  - 自动化创建时按 Trigger 类型只显示必要字段；Webhook 密钥只展示一次，本地目录使用可信 Desktop 选择器，所有调用都能追溯到同一 invocation 与 Run。
+  - “待处理”只显示需要动作的队列和简短分组计数，不显示趋势、成本、吞吐量或其他 Dashboard 指标。
   - 所有 destructive / branching 操作都通过自定义弹窗确认。
   - 模型页能先判断当前默认模型、健康状态和成本来源可用性，再执行切换或自定义配置。
   - 未配置真实 API Key 的模型不能直接切换，必须先进入配置弹窗。
@@ -147,7 +162,7 @@
 ## Information architecture
 - Primary navigation:
   - 网页端左侧导航保持控制台结构稳定，核心操作在页面主区完成。
-  - Electron 工作区使用任务优先侧栏：顶部新建任务，中部最近任务，底部提供团队、终端、文件、审批和设置。
+  - Electron 工作区使用任务优先侧栏：顶部新建任务，中部最近任务，底部提供团队、终端、文件、待处理和设置。
   - Electron 的 Team、终端、Run 和设置页面使用窄操作轨道维持同一组高频入口；不渲染网页版 Console Shell。
   - Electron 设置是临时离开任务工作区的独立空间：顶部提供“返回应用”，左侧固定显示设置搜索与分类，右侧只显示当前分类，不叠加任务侧栏或网页 Console Shell。
 - Core routes/screens:
@@ -168,6 +183,9 @@
   - `/terminal`: Electron 本地终端工作区；网页仍可访问，但通过正常 Console Shell 承载。
   - `/agents/:agentId/workspace?desktop_panel=files`: 打开当前工作区的本地文件面板。
   - `/agents/:agentId/workspace?desktop_panel=approvals`: 打开当前 Run 的审批面板。
+  - `/attention`: Electron 统一待处理中心。服务器投影审批、失败/取消/等待 Run 和 Team 阻塞/失败；Electron 再合并当前 Profile 的同步冲突与 Runtime 状态。浏览器访问时保留服务器队列并明确本地状态不可用。
+  - `/changes`: Electron 原生变更审查工作区。左侧为连续文件状态列表，右侧为 Diff 阅读区；可选 `task_id`、`run_id`、`approval_id` 只用于关联审计上下文，不改变本地 Git 事实。浏览器访问时显示 Desktop-only 降级，不调用本地桥接。
+  - `/agents?desktop_panel=triggers`: 自动化管理入口。Trigger 列表与调用历史并列展示；Webhook 可在 Web/Desktop 管理，文件与 Git 目录选择和执行仅在本地 Desktop 可用。
   - `/runs/:runId`: Electron 可从任务或审批进入的执行详情；网页保留完整证据与观测上下文。
   - `apps/mobile-app`: 任务列表、同步状态、离线待同步队列、冲突提示、新建任务、推送注册提示
 - Content hierarchy:
@@ -176,6 +194,9 @@
   - Team 概览先给聚合状态和异常，再给成员进度与最近活动；单 Agent 的原始消息、工具细节和上下文只在“专注”层展开。
   - 任务图是结构判断工具，不是默认 Dashboard；它只在概览辅助面板、专注按需面板或独立视图出现，不与完整聊天和多列同时争夺首屏。
   - 桌面主体验采用任务式工作台：任务列表、消息流和输入框常驻；运行证据、工具、模型、文件与设置按需展开。
+  - 待处理中心先按严重程度和发生时间展示可执行队列，再提供“全部 / 审批 / 运行 / 团队 / 本地”筛选；每行只保留对象、原因、时间和主动作，不使用指标卡片。
+  - 变更审查先显示仓库状态和文件列表，再显示选中文件 Diff、分块动作与可选 Run/Approval 关联；不使用统计大卡，也不把计划 Diff、同步冲突或通用事件 payload 当作文件 Diff。
+  - 自动化页先显示管理中的 Agent、启用状态和最近运行，再按选中的 Trigger 展开 invocation 历史；不把调度指标、日志和观测图表复制到 Desktop。
   - `/desktop` 保留文档式设置页，但不再承担 Electron 启动首页或主工作流。
   - 桌面发布/运维文档采用“生产运行手册”层级：状态、能力图、启动、验证、发布、隐私安全、排障、外部凭证边界。
   - 先给推荐测试案例，再给原始 JSON / ID
@@ -204,6 +225,12 @@
   - Team 采用“概览 / 专注”双层模型：概览服务快速扫描，专注服务证据阅读；二者切换只改变信息编排，不复制或重置 Team 数据。
 - Principle 11:
   - 概览中的成员项是可比较的状态行，不是聊天卡片；只有进入专注后，消息气泡、工具结果和上下文操作才获得完整空间。
+- Principle 12:
+  - 待处理中心是行动队列，不是第二套 Dashboard；聚合层只投影权威对象，处理动作必须回写 Approval、Run、Team 或本地同步/Runtime 的原有契约。
+- Principle 13:
+  - 变更审查以本地 Git 为事实源并默认只读；写动作只接受服务端生成的受控路径、分块与预览令牌，预览过期或审计失败时拒绝修改并保留可读 Diff。
+- Principle 14:
+  - Trigger 配置与调用历史分离：配置可启停或软删除，invocation/Run 证据不可因配置变更消失；本地来源只接受 Desktop 选中的受控 workspace。
 - Tradeoffs:
   - 保留 MCP 等必要缩写，但配合中文说明。
   - 原始 ID 和包元数据仍然展示，但降到结果卡片与摘要层。
@@ -223,6 +250,7 @@
   - “专注”采用两段式：左侧团队/成员上下文，中央稳定 `760px` 对话阅读列；右侧任务详情或依赖图按需打开，默认不抢占对话宽度。
   - Team 会话消息采用稳定阅读列（目标 `min(100% - 48px, 760px)`），空消息区保留呼吸感但不使用大段无意义垂直空白；composer 固定在会话底部并与阅读列同宽。
   - 桌面 Team 辅助面板默认约 `280px`，任务图可扩大到 `44%`；面板内容密度通过分组标题和行间距控制，不以连续小卡片填满视口。
+  - 待处理中心使用受限宽度的连续列表：顶部为紧凑标题、刷新动作和分段筛选，正文以分隔线组织状态行；摘要使用文本计数，不使用独立统计卡片。
 - Shape/radius/elevation:
   - 使用现有圆角卡片与轻阴影，不引入新材质语言。
   - 桌面版避免把页面大区块做成套娃卡片；使用留白、分隔、短章节和状态行建立层级。
@@ -256,7 +284,15 @@
   - 模型设置摘要区、内置成本来源错误态与响应式宽表容器
   - 桌面工作台文档式章节、首屏待办步骤、桌面桥接状态摘要、最近结果清单
   - Electron 任务壳层：`Harness` 任务侧栏、新建任务、最近任务、团队/终端/桌面设置快捷入口，以及单行工作区操作栏
-  - Electron 操作轨道：任务、团队、终端、文件、审批、设置六个图标入口，在非任务页面保持固定且不与 Team 内部团队列表重复职责。
+  - Electron 操作轨道：任务、团队、终端、文件、待处理、设置六个图标入口，在非任务页面保持固定且不与 Team 内部团队列表重复职责；旧审批深链仍可进入当前 Run 审批面板。
+  - Electron 操作轨道新增“变更”图标入口；`/changes` 与其他操作路由共享同一窄轨道，不渲染网页版 Console Shell。
+  - Electron 操作轨道新增“自动化”入口；`AutomationPanel` 复用 Agent Studio 数据与动作，不创建第二套 Trigger 状态。
+  - `AttentionCenterPage`：服务器待处理投影、本地同步/Runtime 合并、分类筛选、刷新和行级动作；不持有第二份业务状态。
+  - `AttentionItemRow`：可键盘聚焦的连续列表行，显示类型、状态文本、对象标题、原因、时间和一个明确主动作。
+  - `ChangeReviewPage`：工作区选择/刷新、仓库状态、连续文件列表、稳定 Diff 阅读区、分块选择、确认与结果反馈；不复制文件系统树或 Run 详情页。
+  - `ChangeFileList`：按路径稳定排序的紧凑列表，明确显示未跟踪、已修改、已删除、重命名、已暂存、冲突和二进制状态。
+  - `ChangeDiffViewer`：统一 Diff 行号、增删上下文和 hunk 选择；二进制、冲突、过大或不可预览文件使用专属状态，不伪造文本 Diff。
+  - `AutomationPanel`：管理 Agent Trigger、类型化创建表单、启停/软删除、一次性 Webhook secret、invocation 历史和 Run 跳转；file/git 目录由可信 preload 选择器提供。
   - Electron 设置壳层：返回应用、设置搜索、分类导航、设置分组、设置行，以及模型密钥的掩码输入、保存/替换/删除状态。
   - 模型连接设置：Base URL 输入与检测按钮、模型下拉/可编辑选择、刷新模型列表图标按钮、连接耗时和模型数量反馈。
   - 桌面 Team 视图分段控件、成员进度列表、团队检查器、任务依赖图和可调整分栏
@@ -277,6 +313,9 @@
   - 桌面 Team 还需区分“概览 / 专注”层级：概览显示聚合摘要和可比较成员项，专注显示完整对话与按需任务上下文。
   - 模型与密钥至少区分“未配置 / 已配置 / 保存中 / 检测中 / 检测成功 / 验证失败 / 安全存储不可用”；Web 扩展显示只读状态和“在桌面应用中配置”。
   - 模型检测失败要区分无密钥、鉴权失败、超时、地址不可达和模型列表格式不兼容；成功后显示连接耗时与获取到的模型数量。
+  - 待处理中心至少区分“加载中 / 无待处理 / 部分本地状态不可用 / 离线 / 刷新中 / 动作处理中 / 动作失败”。服务器和本地来源可独立失败，已成功加载的来源继续可用。
+  - 变更审查至少区分“加载中 / 未选择工作区 / 非 Git 仓库 / Git 不可用 / 无变更 / 文本 Diff / 未跟踪 / 二进制 / 冲突 / 输出过大 / 预览已过期 / 动作处理中 / 动作成功 / 动作失败”。只读状态成功后，写动作失败不得清空文件列表或 Diff。
+  - 自动化至少区分“加载中 / 空列表 / 已启用 / 已暂停 / 本地 Desktop 专属 / 创建失败 / 密钥仅显示一次 / 无调用历史 / invocation 运行中 / 成功 / 失败 / 禁用”。
 - Token/component ownership:
   - 继续复用 `Button`/`Badge`/`ConfigDialog` 体系，不新增第二套弹窗体系。
 
@@ -286,11 +325,15 @@
 - Keyboard/focus behavior:
   - 自定义弹窗支持 Esc 关闭、可见关闭按钮、明确焦点边界。
   - 桌面核心工作流必须可用键盘完成：切换终端、打开/聚焦 Run 窗口、关闭弹窗、执行主要按钮。
+  - 待处理筛选、列表行和行级动作必须进入自然 Tab 顺序；操作完成后焦点返回相邻行或空状态，刷新不能把焦点移到页面开头。
+  - 变更文件列表支持方向键移动选择，Enter 打开当前 Diff；hunk 复选框、暂存、取消暂存和撤销进入自然 Tab 顺序，确认弹窗关闭后焦点返回触发动作。
 - Contrast/readability:
   - 维持当前高对比文本与状态底色；正文至少使用 `slate-700`，仅时间、辅助统计和禁用态可使用 `slate-500`，避免 `text-[10px]` 与浅灰组合承载关键状态。
 - Screen-reader semantics:
   - 弹窗提供 `role="dialog"`、`aria-modal`、标题与说明关联。
   - 桌面状态摘要、终端列表、最近结果和错误区保留可读标签，不能只靠颜色或图标表达状态。
+  - 待处理类型和严重程度必须同时提供可读文本；列表使用语义化标题与状态区域，动态数量和动作结果通过非打断式 live region 宣告。
+  - Diff 的新增、删除、上下文、冲突和二进制状态必须有文字标签；颜色只用于辅助，行号与代码内容保持可复制和屏幕阅读器可区分。
 - Reduced motion and sensory considerations:
   - 避免强动画，反馈以文字与颜色为主。
 
@@ -306,35 +349,47 @@
   - 概览在宽屏可使用“中央摘要 + 中部成员进度 + 右侧系统看板”；在 `1024px` 以下把看板变为抽屉或顶部摘要行，成员项保持横向可滚动，不能挤压专注对话和 composer。
   - 专注模式在窄屏只保留单 Agent 对话，任务图和系统看板通过临时全幅抽屉打开；切换回概览后恢复原滚动位置和选中 Agent。
   - 桌面 Team 在 `1024px` 至 `1199px` 之间隐藏团队 rail 的非必要标题文字，保留可识别图标与完整 tooltip；不得同时压缩会话阅读列和 composer 到不可用宽度。
+  - 待处理中心在宽屏保持单列扫描宽度；窄屏时元数据和动作换行，不允许标题、长工具名或错误原因撑出水平滚动。
+  - 变更审查宽屏使用固定约 `280px` 文件列表和剩余宽度 Diff；低于 `900px` 时切为“文件 / Diff”单面板导航，保留选中项与滚动位置，长路径和长代码只能在各自区域内截断或滚动。
 - Touch/hover differences:
   - 不能依赖 hover 才能理解状态，点击后必须有显式反馈。
 
 ## Interaction states
 - Loading:
   - 使用“同步中 / 安装中 / 审批中 / 测试中”等中文忙碌文案。
+  - 待处理中心首次加载显示稳定列表骨架；手动刷新保留已有内容并在刷新按钮上显示忙碌状态。
+  - 变更审查刷新时保留已加载列表与当前 Diff；首次读取和分块动作使用局部忙碌状态，不能改变主要区域尺寸。
 - Empty:
   - 明确说明“暂无匹配项 / 暂无可选文档 / 暂无能力包”。
+  - 待处理中心显示“暂无待处理事项”；分类筛选为空时说明该分类为空，并保留返回“全部”的动作。
+  - 变更审查无工作区时提供“选择工作区”；仓库无变更时显示“工作区没有待审查变更”，不显示空白 Diff 容器。
 - Error:
   - 错误信息直接显示并进入统一反馈层。
   - 模型成本来源 404 / 未启用时显示“成本来源暂不可用”和中文原因，避免裸露 `404: Not Found`。
   - 桌面桥接错误显示为中文状态条，不阻塞插件/模板等 API-backed 信息读取。
   - 桌面发布错误必须区分本地构建问题、Electron ABI 问题、Apple/Windows 凭证缺失、更新元数据不匹配。
   - `MODEL_SETUP_REQUIRED` 在任务执行位置显示，不把整个应用重定向到阻断页；错误旁提供“打开模型设置”。
+  - 服务器投影失败时提供重试；仅 Desktop 本地状态失败时显示局部提示，仍展示审批、Run 和 Team 项；浏览器不把缺少 preload 当作错误。
+  - 变更审查区分非仓库、Git 未安装、命令超时、输出超过上限、路径被拒绝、预览过期和执行失败；浏览器缺少 preload 时显示“请在桌面应用中审查本地变更”，不抛异常。
 - Success:
   - 成功提示要告诉用户“做成了什么”和“接下来还能做什么”。
+  - 审批或同步动作成功后立即刷新权威来源，并用简短状态提示说明已批准、已拒绝或已同步。
+  - 分块动作成功后重新读取 Git 状态和选中文件 Diff，并提示实际完成的是“已暂存”“已取消暂存”或“已撤销”；不使用含糊的“已接受”。
 - Disabled:
   - 禁用按钮应保留原因提示或上下文说明。
   - 未配置密钥的模型切换按钮不执行直接切换，使用“配置并启用”进入弹窗。
   - Team 辅助面板收起后，折叠按钮仍显示当前动作的文字提示；不能只留下没有语义的圆形图标。
+  - 二进制、冲突、输出过大、预览过期、没有可选 hunk 或只读降级时禁用写动作并显示原因；冲突文件只允许查看，不提供自动撤销。
 - Offline/slow network, if applicable:
   - 网络或源降级时保留本地推荐，并明确说明部分源不可用。
   - 移动端离线时任务保存在本机，显示“待同步”并在网络恢复后复用桌面同步协议上传。
+  - Desktop 离线时继续显示可读取的本地冲突/Runtime 状态；服务器队列标注暂不可更新，不伪装为“暂无待处理”。
 
 ## Content voice
 - Tone:
   - 直接、稳定、说明式，不喊口号。
 - Terminology:
-  - 固定使用“运行平台、标记节省、商店、安装、审批、挂载、测试、确认、知识源、团队成员”等中文。
+  - 固定使用“运行平台、标记节省、商店、安装、审批、待处理、挂载、测试、确认、知识源、团队成员”等中文。
 - Microcopy rules:
   - 优先告诉用户结果和下一步。
   - 桌面页避免“高级功能”这类泛称；导航、标题和按钮都直接说“桌面”“工作区”“运行窗口”“离线执行”。
@@ -356,13 +411,22 @@
   - 继续沿用现有 `slate / emerald / amber / cyan / red` 语义色。
 - Performance constraints:
   - 反馈组件保持轻量，不引入新依赖。
+  - Git 子进程使用固定命令、参数数组、超时以及 stdout/stderr 上限；状态与 Diff 按需读取，不能把完整仓库内容载入渲染器。
 - Compatibility constraints:
   - 后端仍可能返回英文状态值，前端需做中文映射而不是改协议。
+  - Desktop Git 能力使用 Node 标准库调用系统 `git`，不新增 Git 依赖；命令不经过 shell，也不接受渲染器提供任意 flags。
+  - 所有仓库和文件路径必须先经过当前窗口 workspace root、`realpath` 和 symlink 段校验；禁止 `reset --hard`、`clean`、`checkout --`、`--force`、目录逃逸和 symlink 逃逸。
+  - 分块暂存使用受控 patch 与 `git apply --cached`，取消暂存使用受控 reverse cached patch，撤销工作树使用受控 reverse patch；每个 mutation 都必须携带由主进程签发的预览令牌并在执行前验证仓库、路径、hunk 与内容 identity。
+  - 变更 mutation 可附带 `task_id`、`run_id`、`approval_id`；仅在上下文可验证且审计成功时记录关联事件，不能由渲染器伪造执行结果。审计不可用时进入只读降级并拒绝 mutation。
 - Test/screenshot expectations:
   - 至少覆盖商店安装链路、确认弹窗链路、MCP 快速测试链路和核心中文文案。
   - 模型页布局调整需覆盖成功成本来源、价格源 404 降级、桌面和窄屏截图、无文档级水平溢出。
   - 桌面改动至少覆盖对应的 backend desktop API、Agent Console desktop/terminal Vitest、desktop-app Vitest、`build:main`；发布相关改动还需覆盖 `build:renderer`、`electron-builder --dir --publish never`、release YAML/script 校验、浏览器和真实 Electron smoke。
   - 桌面壳层改动必须分别证明 Electron 工作区不渲染 Console Shell、浏览器工作区仍保留 Console Shell、Electron 主窗口默认进入 `/agents/default/workspace`。
+  - 待处理中心必须覆盖 principal/organization 隔离、审批/Run/Team 投影、稳定排序与上限、浏览器降级、本地冲突合并、直接动作后的缓存刷新，以及加载/空/部分错误状态。
+  - 变更审查必须覆盖普通、未跟踪、已暂存、重命名、删除、二进制、冲突、非仓库、Git 不可用、超时、输出上限、目录/symlink 逃逸和错误脱敏；mutation 额外覆盖确认取消、预览令牌匹配/过期、stage/unstage/revert 语义、审计成功/失败与动作后刷新。
+  - `/changes` 路由必须证明 Electron 不渲染网页版 Console Shell、操作轨道高亮正确、浏览器无 preload 降级可用，并在桌面与窄屏视口保持无文档级水平溢出。
+  - 自动化必须覆盖四类 Trigger 的请求体、幂等调用、禁用/kill switch、租约/重试、审批/取消/恢复、workspace 边界、一次性 secret、invocation 详情、宽窄屏无溢出和浏览器无 preload 降级。
   - 设置中心必须覆盖分类切换、搜索过滤、旧 setup 链接兼容、Base URL 校验、连接检测、远端模型列表刷新、默认模型保存、API Key 保存/替换/删除、Web 只读状态、未配置时主工作区可打开，以及任务执行时的配置入口。
   - 桌面操作路由必须证明 Team、终端、Run 和桌面设置不渲染网页版 Console Shell，操作轨道可返回任务，文件和审批深链会打开对应工作区面板。
   - Team 桌面入口必须覆盖“有团队自动进入 / 无团队可创建 / 浏览器仍停留列表”三种状态。

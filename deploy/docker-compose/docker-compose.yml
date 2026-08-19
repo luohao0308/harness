@@ -127,7 +127,9 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_started
-    command: python -m dramatiq app.workers.subagent_worker
+    command: >-
+      python -m dramatiq app.workers.subagent_worker
+      app.workers.trigger_invocation_worker
     environment:
       APP_ENV: ${APP_ENV:-production}
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
@@ -145,6 +147,29 @@ services:
       AI_PROVIDER_API_KEY: ${AI_PROVIDER_API_KEY:-}
       MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-http://api-server:8000/mock-model}
       MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-replace-me}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+
+  trigger-dispatcher:
+    image: agent-harness-api-server:latest
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    command: python -m app.workers.trigger_dispatch_worker
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
+      REDIS_URL: redis://redis:6379/0
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?AUTH_JWT_SECRET required}
+      AUTH_PUBLIC_REGISTRATION_ENABLED: ${AUTH_PUBLIC_REGISTRATION_ENABLED:-false}
+      HARNESS_SECRET_ENCRYPTION_KEY: ${HARNESS_SECRET_ENCRYPTION_KEY:?HARNESS_SECRET_ENCRYPTION_KEY required}
+      HARNESS_SECRET_ENCRYPTION_KEY_ID: ${HARNESS_SECRET_ENCRYPTION_KEY_ID:-primary-v1}
+      AI_PROVIDER_PROTOCOL: ${AI_PROVIDER_PROTOCOL:-chat_completions}
+      AI_PROVIDER_BASE_URL: ${AI_PROVIDER_BASE_URL:-https://chybenzun.top/v1}
+      AI_PROVIDER_MODEL: ${AI_PROVIDER_MODEL:-deepseek-v4-flash}
+      AI_PROVIDER_MODELS: ${AI_PROVIDER_MODELS:-deepseek-v4-flash,deepseek-v4-pro,glm-5.2,kimi-k2.7-code,kimi-k2.6,doubao-seed-2-1-turbo,doubao-seed-2-1-pro,qwen3.7-max,qwen3.7-plus,minimax-m3,step-3.7-flash,mimo-v2.5}
+      AI_PROVIDER_NAME: ${AI_PROVIDER_NAME:-chybenzun-openai-compatible}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
 
   agent-assignment-worker:

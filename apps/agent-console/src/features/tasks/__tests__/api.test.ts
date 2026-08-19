@@ -13,6 +13,7 @@ import {
   resolveApiBaseUrl,
   saveStoredSecret,
   setAuthTokens,
+  syncAgentProjectKnowledgeIndex,
   uploadCurrentUserAvatar,
   taskEventStreamUrl,
 } from "../api";
@@ -373,5 +374,45 @@ describe("json API requests", () => {
     const assertion = expect(createPromise).rejects.toThrow("请求超时");
     await vi.advanceTimersByTimeAsync(12_000);
     await assertion;
+  });
+
+  it("retains project sync timeouts when an external cancellation signal is present", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        const signal = init?.signal;
+        return new Promise<Response>((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("aborted", "AbortError")),
+            { once: true },
+          );
+        });
+      }),
+    );
+    const contextController = new AbortController();
+    const syncPromise = syncAgentProjectKnowledgeIndex("default", "index-1", {
+      schema_version: "desktop-project-knowledge-snapshot-v1",
+      default_ignore_version: "v1",
+      desktop_profile_id: "profile-a",
+      root_identity: "a".repeat(64),
+      snapshot_cursor: "cursor-1",
+      complete: true,
+      truncated: false,
+      truncation_reason: null,
+      files: [],
+      errors: [],
+      scanned_files: 0,
+      indexed_files: 0,
+      total_bytes: 0,
+      started_at: "2026-08-19T00:00:00Z",
+      completed_at: "2026-08-19T00:00:01Z",
+    }, contextController.signal);
+
+    const assertion = expect(syncPromise).rejects.toThrow("请求超时");
+    await vi.advanceTimersByTimeAsync(30_000);
+    await assertion;
+    expect(contextController.signal.aborted).toBe(false);
   });
 });

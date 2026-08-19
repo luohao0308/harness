@@ -123,12 +123,19 @@ export class SQLiteSyncService implements SyncService {
           const pushResult = await this.pushOperations(pendingOps)
 
           // 4. Mark non-conflicting operations as completed
-          const conflictIds = new Set(pushResult.conflicts.map(conflict => conflict.entity_id))
+          const conflictIds = new Set(
+            pushResult.conflicts.map(conflict => conflict.operation_id).filter(Boolean),
+          )
+          const conflictEntities = new Set(
+            pushResult.conflicts.filter(conflict => !conflict.operation_id).map(conflict => conflict.entity_id),
+          )
           for (const op of pendingOps) {
             if (!op.id) continue
-            if (conflictIds.has(op.entity_id)) {
+            if ((op.operation_id && conflictIds.has(op.operation_id)) || conflictEntities.has(op.entity_id)) {
               this.offlineQueue.markFailed(op.id, 'Server reported a sync conflict')
-              this.taskStore.markConflict(op.entity_id, true)
+              if (op.entity_type === 'task') {
+                this.taskStore.markConflict(op.entity_id, true)
+              }
             } else {
               this.offlineQueue.markCompleted(op.id)
             }
@@ -211,10 +218,11 @@ export class SQLiteSyncService implements SyncService {
 
 function toServerOperation(operation: SyncOperation): {
   type: 'create' | 'update' | 'delete'
-  entity_type: 'task'
+  entity_type: 'task' | 'offline_agent_run'
   entity_id: string
   data?: Record<string, unknown> | null
   timestamp: string
+  operation_id?: string
 } {
   return {
     type: operation.operation_type.toLowerCase() as 'create' | 'update' | 'delete',
@@ -222,5 +230,6 @@ function toServerOperation(operation: SyncOperation): {
     entity_id: operation.entity_id,
     data: operation.payload_json ? JSON.parse(operation.payload_json) as Record<string, unknown> : null,
     timestamp: operation.client_timestamp,
+    operation_id: operation.operation_id ?? (operation.id ? String(operation.id) : undefined),
   }
 }

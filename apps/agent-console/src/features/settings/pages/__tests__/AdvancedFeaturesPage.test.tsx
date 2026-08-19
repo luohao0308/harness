@@ -331,6 +331,136 @@ describe("AdvancedFeaturesPage", () => {
     expect(window.localStorage.getItem("harness.a11y.high_contrast")).toBe("1");
   });
 
+  it("runs and approves a complete offline Agent through the desktop bridge", async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const path = requestPath(input);
+      if (path === "/api/plugins/marketplace") return jsonResponse({ installed_count: 0, items: [] });
+      if (path === "/api/plugins/prompt-templates") return jsonResponse({ items: [] });
+      return jsonResponse({});
+    });
+    const waiting: DesktopOfflineAgentRun = {
+      id: "11111111-1111-4111-8111-111111111111",
+      prompt: "写入离线报告",
+      result: null,
+      status: "WAITING_APPROVAL",
+      modelSource: null,
+      modelProvider: "desktop-offline",
+      modelName: "deterministic-v1",
+      modelRequested: false,
+      fallbackReason: null,
+      errorMessage: null,
+      toolRequest: { name: "workspace.write_text", input: { path: "report.txt" } },
+      pendingApprovalId: "approval-1",
+      createdAt: "2026-08-19T00:00:00Z",
+      updatedAt: "2026-08-19T00:00:00Z",
+      startedAt: "2026-08-19T00:00:00Z",
+      completedAt: null,
+      syncRevision: 1,
+    };
+    const run = vi.fn(async () => waiting);
+    const decideApproval = vi.fn(async () => ({ ...waiting, status: "COMPLETED" as const }));
+    const getRun = vi.fn(async () => ({
+      approvals: [{
+        status: "PENDING",
+        reason: "写入前需要审批",
+        decision: {},
+        target: {
+          path: "report.txt",
+          exists: false,
+          sha256: null,
+          mtimeMs: null,
+          sizeBytes: null,
+        },
+        proposal: { sha256: "a".repeat(64), sizeBytes: 16 },
+      }],
+    }));
+    window.desktopApi = {
+      offlineAgent: {
+        listRuns: vi.fn(async () => ({ items: [waiting] })),
+        getRun,
+        run,
+        decideApproval,
+      },
+    };
+
+    renderPage();
+
+    expect(await screen.findByText("写入离线报告")).toBeInTheDocument();
+    expect(await screen.findByText(/写入目标：/)).toHaveTextContent("report.txt");
+    expect(screen.getByText(/拟写内容：16 bytes/)).toHaveTextContent("aaaaaaaaaaaa");
+    await userEvent.click(screen.getByRole("button", { name: "批准写入" }));
+    expect(decideApproval).toHaveBeenCalledWith("approval-1", true);
+
+    await userEvent.selectOptions(screen.getByLabelText("离线 Agent 受限工具"), "workspace.write_text");
+    await userEvent.clear(screen.getByLabelText("离线 Agent 工具路径"));
+    await userEvent.type(screen.getByLabelText("离线 Agent 工具路径"), "reports/offline.txt");
+    await userEvent.click(screen.getByRole("button", { name: "启动离线 Agent" }));
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: "检查当前发布证据并给出下一步。",
+      toolRequest: {
+        name: "workspace.write_text",
+        input: expect.objectContaining({ path: "reports/offline.txt" }),
+      },
+    }));
+  });
+
+  it("shows an offline write conflict and disables the stale approval", async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const path = requestPath(input);
+      if (path === "/api/plugins/marketplace") return jsonResponse({ installed_count: 0, items: [] });
+      if (path === "/api/plugins/prompt-templates") return jsonResponse({ items: [] });
+      return jsonResponse({});
+    });
+    const waiting: DesktopOfflineAgentRun = {
+      id: "22222222-2222-4222-8222-222222222222",
+      prompt: "更新离线报告",
+      result: null,
+      status: "WAITING_APPROVAL",
+      modelSource: null,
+      modelProvider: "desktop-offline",
+      modelName: "deterministic-v1",
+      modelRequested: false,
+      fallbackReason: null,
+      errorMessage: "workspace file changed since approval: report.txt",
+      toolRequest: { name: "workspace.write_text", input: { path: "report.txt" } },
+      pendingApprovalId: "approval-conflict",
+      createdAt: "2026-08-19T00:00:00Z",
+      updatedAt: "2026-08-19T00:00:00Z",
+      startedAt: "2026-08-19T00:00:00Z",
+      completedAt: null,
+      syncRevision: 2,
+    };
+    const getRun = vi.fn(async () => ({
+      approvals: [{
+        status: "PENDING",
+        reason: "写入前需要审批",
+        decision: { conflict: { reason: waiting.errorMessage } },
+        target: {
+          path: "report.txt",
+          exists: true,
+          sha256: "b".repeat(64),
+          mtimeMs: 1,
+          sizeBytes: 8,
+        },
+        proposal: { sha256: "c".repeat(64), sizeBytes: 16 },
+      }],
+    }));
+    window.desktopApi = {
+      offlineAgent: {
+        listRuns: vi.fn(async () => ({ items: [waiting] })),
+        getRun,
+        decideApproval: vi.fn(),
+      },
+    };
+
+    renderPage();
+
+    expect(await screen.findByText(/文件已变化，请重新发起审批/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "批准写入" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "刷新审批预览" }));
+    await waitFor(() => expect(getRun).toHaveBeenCalledTimes(2));
+  });
+
   it("exposes native operations promised by the desktop production guide", async () => {
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const path = requestPath(input);

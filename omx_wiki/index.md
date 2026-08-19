@@ -1,8 +1,24 @@
 # Wiki Index
 
-> 64 pages | Last updated: 2026-08-17T02:10:00+08:00
+> 71 pages | Last updated: 2026-08-20T00:25:32+08:00
 
 ## session-log
+
+- [Desktop / Trigger 完整性加固](session-2026-08-20-desktop-trigger-integrity-hardening.md) — 完成 HARD-001 S1-S5：归属与 workspace 隔离、Project Knowledge generation、离线 operation_id 冲突、文件审批 fail-closed、Change Review 并发幂等及全量验证；正式三平台 Release 证据仍由 REL-001 跟踪。
+
+- [Desktop 完整离线 Agent](session-2026-08-19-desktop-offline-agent.md) — 完成 Profile 级离线 Run 证据、受限工具与写入审批、取消/恢复、可信 IPC、服务端幂等证据导入及本地 macOS x64 directory package；正式三平台签名发布证据仍由 REL-001 跟踪。
+
+- [Desktop 项目知识自动索引](session-2026-08-18-desktop-project-knowledge-discovery.md) — 完成 Profile 隔离安全扫描、持久化增量索引、完整 snapshot tombstone、Desktop 生命周期管理和 `project://` 真实 Citation，路线推进到 pending 的 DESK-006。
+
+- [Desktop Trigger 与后台自动化](session-2026-08-18-desktop-trigger-automation.md) — 完成 Webhook、定时、文件和 Git Trigger 的幂等 invocation、可靠后台执行、workspace 安全边界与 Desktop 管理，并将路线推进到 DESK-005。
+
+- [Desktop Trigger 契约盘点与修订确认门](session-2026-08-17-desktop-trigger-contract-discovery.md) — 确认现有 Webhook Trigger 与本地 runtime jobs 的复用边界，记录 SQLite/PostgreSQL 迁移、additive API、幂等 invocation、同 Run 重试和 kill switch 修订，等待一次性确认后实施。
+
+- [Desktop 原生变更审查工作区](session-2026-08-17-desktop-change-review.md) — 在受控仓库根目录提供 Git 状态、分块 Diff、安全 stage/unstage/revert、未跟踪整文件暂存和 Run/Approval 审计，并将路线推进到 DESK-004。
+
+- [Feature Catalog dev-workflow 提取](session-2026-08-17-feature-catalog-dev-workflow-extraction.md) — 将 Harness 试点泛化为 dev-workflow `0.3.0` 的可选流程包，提供通用契约、模板、工具与审计集成，同时保留项目数据所有权。
+
+- [Feature Catalog 试点](session-2026-08-17-feature-catalog-pilot.md) — 建立 8 个领域、14 个能力、41 个具体功能的机器可读目录，生成成熟度矩阵，接入 AI brief 匹配和 Docs CI 漂移门禁。
 
 - [Desktop 可靠性交付收口](session-2026-08-17-desktop-reliability-closeout.md) — 关闭旧 Console 路由缺陷，拆分 Desktop 严格 type-check 边界，并在 Release 前独立校验三平台五样本启动证据；真实 runner P95 仍保留为 REL-001 外部证据项。
 

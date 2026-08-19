@@ -3,6 +3,111 @@
  * Exposed to renderer via contextBridge in preload.ts
  */
 
+import type {
+  DesktopOfflineAgentRun,
+  DesktopOfflineAgentRunInput,
+  DesktopOfflineAgentSnapshot,
+} from './services/offline-agent-types'
+
+export type {
+  DesktopOfflineAgentApproval,
+  DesktopOfflineAgentEvent,
+  DesktopOfflineAgentModelCall,
+  DesktopOfflineAgentRun,
+  DesktopOfflineAgentRunInput,
+  DesktopOfflineAgentSnapshot,
+  DesktopOfflineAgentStatus,
+  DesktopOfflineAgentToolCall,
+  DesktopOfflineAgentToolName,
+  DesktopOfflineAgentToolRequest,
+} from './services/offline-agent-types'
+
+export type DesktopChangeReviewState =
+  | 'ready'
+  | 'no-workspace'
+  | 'not-repository'
+  | 'git-unavailable'
+  | 'error'
+
+export type DesktopChangeFile = {
+  path: string
+  previousPath: string | null
+  indexStatus: string
+  worktreeStatus: string
+  staged: boolean
+  unstaged: boolean
+  untracked: boolean
+  conflicted: boolean
+}
+
+export type DesktopChangeReviewStatus = {
+  state: DesktopChangeReviewState
+  rootPath: string | null
+  repositoryRoot: string | null
+  branch: string | null
+  upstream: string | null
+  ahead: number
+  behind: number
+  files: DesktopChangeFile[]
+  errorCode: string | null
+  message: string | null
+}
+
+export type DesktopChangeDiffMode = 'staged' | 'worktree'
+export type DesktopChangeDiffKind = 'text' | 'binary' | 'conflict' | 'empty' | 'too-large'
+
+export type DesktopChangeDiffHunk = {
+  id: string
+  header: string
+  oldStart: number
+  oldLines: number
+  newStart: number
+  newLines: number
+  lines: string[]
+}
+
+export type DesktopChangeDiffSection = {
+  mode: DesktopChangeDiffMode
+  kind: DesktopChangeDiffKind
+  headerLines: string[]
+  hunks: DesktopChangeDiffHunk[]
+  canStage: boolean
+  canUnstage: boolean
+  canRevert: boolean
+  message: string | null
+}
+
+export type DesktopChangeDiff = {
+  path: string
+  previewToken: string
+  expiresAt: string
+  sections: DesktopChangeDiffSection[]
+}
+
+export type DesktopChangeReviewAction = 'stage' | 'unstage' | 'revert'
+
+export type DesktopChangeReviewAuditContext = {
+  taskId?: string
+  runId?: string
+  approvalId?: string
+}
+
+export type DesktopChangeMutationInput = {
+  action: DesktopChangeReviewAction
+  previewToken: string
+  hunkIds: string[]
+  auditContext?: DesktopChangeReviewAuditContext
+}
+
+export type DesktopChangeMutationResult = {
+  action: DesktopChangeReviewAction
+  path: string
+  status: 'completed'
+  updatedAt: string
+  auditId: string
+  eventId: string | null
+}
+
 export type TaskStatus =
   | 'CREATED'
   | 'PLANNING'
@@ -243,6 +348,49 @@ export type DesktopFileListResult = {
   truncated: boolean
 }
 
+export type DesktopProjectKnowledgeScanOptions = {
+  ignorePatterns?: string[]
+  maxFiles?: number
+  maxFileBytes?: number
+  maxTotalBytes?: number
+  maxDurationMs?: number
+}
+
+export type DesktopProjectKnowledgeSnapshotFile = {
+  relativePath: string
+  status: 'ready' | 'skipped'
+  content: string | null
+  contentSha256: string | null
+  sizeBytes: number
+  modifiedAt: string
+  mimeType: string | null
+  skipReason:
+    | 'symlink'
+    | 'file_too_large'
+    | 'invalid_utf8'
+    | 'changed_during_scan'
+    | 'read_failed'
+    | null
+}
+
+export type DesktopProjectKnowledgeSnapshot = {
+  schemaVersion: 'desktop-project-knowledge-snapshot-v1' | 'desktop-project-knowledge-snapshot-v2'
+  defaultIgnoreVersion: 'v1'
+  rootIdentity: string
+  snapshotGeneration?: number
+  snapshotCursor: string
+  complete: boolean
+  truncated: boolean
+  truncationReason: 'max_files' | 'max_total_bytes' | 'max_duration' | 'scan_error' | null
+  files: DesktopProjectKnowledgeSnapshotFile[]
+  errors: Array<{ path: string; reason: string }>
+  scannedFiles: number
+  indexedFiles: number
+  totalBytes: number
+  startedAt: string
+  completedAt: string
+}
+
 export type DesktopProfile = {
   id: string
   label: string
@@ -260,6 +408,12 @@ export type DesktopProfileSaveInput = {
   apiBaseUrl?: string
   authToken?: string
   dataPath?: string
+}
+
+export type DesktopWorkspaceAuthorization = {
+  authorization: string
+  label: string
+  expiresAt: string
 }
 
 export type DesktopWindowSummary = {
@@ -340,6 +494,22 @@ export type DesktopSyncRuntimeStatus = {
   pendingOperations: number
   retryableOperations: number
   conflictCount: number
+}
+
+export type DesktopSyncConflictSummary = {
+  tasks: Array<{
+    id: string
+    title: string
+    status: string
+    updated_at: string
+    conflict_detected: boolean
+  }>
+  serverConflicts: Array<{
+    entity_id: string
+    entity_type: string
+    server_version: Record<string, unknown>
+    client_version: Record<string, unknown>
+  }>
 }
 
 /**
@@ -428,8 +598,18 @@ export interface DesktopApi {
     promoteResultToPendingAgentTask: (offlineTaskId: string) => Promise<{ taskId: string; operationId: number | null }>
   }
 
+  offlineAgent: {
+    run: (input: DesktopOfflineAgentRunInput) => Promise<DesktopOfflineAgentRun>
+    listRuns: (limit?: number) => Promise<{ items: DesktopOfflineAgentRun[] }>
+    getRun: (runId: string) => Promise<DesktopOfflineAgentSnapshot>
+    cancel: (runId: string) => Promise<DesktopOfflineAgentRun>
+    resume: (runId: string) => Promise<DesktopOfflineAgentRun>
+    decideApproval: (approvalId: string, approved: boolean) => Promise<DesktopOfflineAgentRun>
+  }
+
   sync: {
     getStatus: () => Promise<DesktopSyncRuntimeStatus>
+    getConflicts: () => Promise<DesktopSyncConflictSummary>
     runNow: () => Promise<DesktopSyncRuntimeStatus>
     onStatus: (callback: (status: DesktopSyncRuntimeStatus) => void) => () => void
   }
@@ -449,14 +629,22 @@ export interface DesktopApi {
 
   file: {
     selectWorkspaceRoot: () => Promise<DesktopFileWatchState | null>
+    selectAuthorizedWorkspaceRoot: () => Promise<DesktopWorkspaceAuthorization | null>
     getWorkspaceRoot: () => Promise<DesktopFileWatchState>
     setWorkspaceRoot: (rootPath: string | null) => Promise<DesktopFileWatchState>
     startWatch: () => Promise<DesktopFileWatchState>
     stopWatch: () => Promise<DesktopFileWatchState>
     listFiles: (options?: { path?: string; maxDepth?: number; maxEntries?: number }) => Promise<DesktopFileListResult>
+    scanProjectKnowledge: (options?: DesktopProjectKnowledgeScanOptions) => Promise<DesktopProjectKnowledgeSnapshot>
     readFile: (path: string) => Promise<DesktopFileReadResult>
     writeFile: (path: string, content: string) => Promise<DesktopFileWriteResult>
     onChange: (callback: (event: DesktopFileChangeEvent) => void) => (() => void)
+  }
+
+  changeReview: {
+    getStatus: () => Promise<DesktopChangeReviewStatus>
+    getDiff: (path: string) => Promise<DesktopChangeDiff>
+    mutate: (input: DesktopChangeMutationInput) => Promise<DesktopChangeMutationResult>
   }
 
   // SSE event listeners

@@ -14,6 +14,7 @@ import {
   KnowledgeManagementPanel,
   type KnowledgeSourceFilter,
 } from "../../agents/components/KnowledgeManagementPanel";
+import { ProjectKnowledgeIndexPanel } from "../components/ProjectKnowledgeIndexPanel";
 
 const filterOptions: Array<{
   id: KnowledgeSourceFilter;
@@ -125,6 +126,8 @@ export function KnowledgePage() {
             </button>
           ))}
         </section>
+
+        <ProjectKnowledgeIndexPanel agentId={selectedAgentId} />
 
         <KnowledgeManagementPanel
           agentId={selectedAgentId}

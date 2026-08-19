@@ -1,5 +1,6 @@
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from shlex import quote
@@ -124,13 +125,22 @@ class StepResumeOutcome:
 
 
 class Executor:
-    def __init__(self, session: Session, planner: DeterministicPlanner | None = None) -> None:
+    def __init__(
+        self,
+        session: Session,
+        planner: DeterministicPlanner | None = None,
+        step_checkpoint: Callable[[], None] | None = None,
+        step_guard: Callable[[], None] | None = None,
+    ) -> None:
         self.session = session
         self.planner = planner or DeterministicPlanner()
         self.event_store = EventStore(session)
         self.workspace_root = Path(__file__).resolve().parents[2]
+        self.workspace_access_enabled = True
         self.dag_scheduler = DAGScheduler()
         self.step_context: dict[str, DAGStepResult] = {}
+        self.step_checkpoint = step_checkpoint
+        self.step_guard = step_guard
 
     def start_task(self, task: Task) -> Task:
         self._ensure_task_agent_scope(task)
@@ -285,7 +295,7 @@ class Executor:
         completed_steps = set(replay_state.get("completed_steps", []))
         failed_steps = set(replay_state.get("failed_steps", []))
         if not completed_steps and not failed_steps:
-            return self.start_task(task)
+            return self.execute_existing_plan(task)
 
         task.status = "RUNNING"
         task.updated_at = utc_now()
@@ -302,6 +312,8 @@ class Executor:
                     },
                 )
                 continue
+            if self.step_guard is not None:
+                self.step_guard()
             self.event_store.append(
                 task_id=task.id,
                 event_type=EventType.STEP_RETRIED,
@@ -311,6 +323,8 @@ class Executor:
                 },
             )
             result = self._execute_step(task, plan_row, step)
+            if self.step_checkpoint is not None:
+                self.step_checkpoint()
             if result.status == "STEP_FAILED":
                 self._apply_step_failure(task=task, step=step, result=result)
                 return task
@@ -379,6 +393,8 @@ class Executor:
                     },
                 )
                 continue
+            if self.step_guard is not None:
+                self.step_guard()
             self.event_store.append(
                 task_id=task.id,
                 event_type=EventType.STEP_RETRIED,
@@ -390,6 +406,8 @@ class Executor:
             )
             resumed_step_keys.append(step.key)
             result = self._execute_step(task, plan_row, step)
+            if self.step_checkpoint is not None:
+                self.step_checkpoint()
             if result.status == "STEP_FAILED":
                 failed_step_key = step.key
                 error_message = result.summary
@@ -522,6 +540,8 @@ class Executor:
 
             # Execute steps in this group (sequentially for sync compatibility)
             for step in executable_steps:
+                if self.step_guard is not None:
+                    self.step_guard()
                 start_time = time.time()
                 result = self._execute_step(task, plan_row, step)
                 duration_ms = int((time.time() - start_time) * 1000)
@@ -553,6 +573,8 @@ class Executor:
                         tool_calls=result.tool_calls,
                         duration_ms=duration_ms,
                     )
+                if self.step_checkpoint is not None:
+                    self.step_checkpoint()
 
         # Determine final task state
         if failed_steps:
@@ -748,16 +770,40 @@ class Executor:
             },
         )
 
-        # Subagent delegation: only when execution_mode=async AND can_spawn_subagent=true
+        # LangGraph runtime adapter
         if step.execution_mode == "langgraph_node":
+            if not self.workspace_access_enabled and step.requires_sandbox:
+                return self._workspace_unavailable_result(
+                    task=task,
+                    step=step,
+                    step_row=step_row,
+                    tool_name="langgraph_node",
+                )
             return self._execute_langgraph_step(task, plan_row, step, step_row)
 
         # Subagent delegation: only when execution_mode=async AND can_spawn_subagent=true
         if step.execution_mode == "async" and step.can_spawn_subagent:
+            if not self.workspace_access_enabled:
+                return self._workspace_unavailable_result(
+                    task=task,
+                    step=step,
+                    step_row=step_row,
+                    tool_name="subagent.fanout",
+                )
             return self._execute_subagent_step(task, plan_row, step, step_row)
 
         # Model-driven tool selection: invoke Model Gateway with step context
         tool_name, tool_input = self._select_tool_for_step(task, step)
+
+        if not self.workspace_access_enabled and (
+            step.requires_sandbox or _tool_requires_workspace(tool_name)
+        ):
+            return self._workspace_unavailable_result(
+                task=task,
+                step=step,
+                step_row=step_row,
+                tool_name=tool_name,
+            )
 
         # Execute tool with timeout
         timeout = step.timeout_seconds or DEFAULT_TOOL_TIMEOUT
@@ -946,6 +992,40 @@ class Executor:
                 "tool_name": tool_name,
                 "permission_boundary": "sandbox_runtime",
                 "recoverable": True,
+            },
+        )
+        self.session.flush()
+        return StepResult(
+            step_key=step.key,
+            status="STEP_FAILED",
+            summary=message,
+            output="",
+            tool_calls=[],
+            next_action="stop",
+        )
+
+    def _workspace_unavailable_result(
+        self,
+        *,
+        task: Task,
+        step: PlanStep,
+        step_row: TaskStep,
+        tool_name: str,
+    ) -> StepResult:
+        message = "Trigger Run has no bound workspace for this operation"
+        step_row.status = "STEP_FAILED"
+        step_row.error_message = message
+        step_row.completed_at = utc_now()
+        self.event_store.append(
+            task_id=task.id,
+            event_type=EventType.STEP_FAILED,
+            payload_json={
+                "step_id": step_row.id,
+                "step_key": step.key,
+                "summary": message,
+                "tool_name": tool_name,
+                "permission_boundary": "trigger_workspace",
+                "recoverable": False,
             },
         )
         self.session.flush()
@@ -1666,3 +1746,15 @@ def _tool_requires_sandbox(tool_name: str) -> bool:
         "git_command",
         "network_request",
     }
+
+
+def _tool_requires_workspace(tool_name: str) -> bool:
+    return tool_name in {
+        "read_file",
+        "list_files",
+        "write_file",
+        "run_shell",
+        "run_tests",
+        "git_command",
+        "network_request",
+    } or tool_name.startswith("sandbox.")

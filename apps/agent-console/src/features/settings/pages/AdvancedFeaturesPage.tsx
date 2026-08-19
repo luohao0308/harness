@@ -25,7 +25,6 @@ import { Badge, type BadgeTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Input, Textarea } from "../../../components/ui/input";
 import { VirtualList } from "../../../components/ui/VirtualList";
-import { isLocalRuntimeProfile } from "../../../lib/local-runtime";
 import {
   createPromptTemplate,
   deletePromptTemplate,
@@ -44,6 +43,8 @@ type DesktopBridgeState = {
   localModel: DesktopLocalModelSettings | null;
   localModelHealth: DesktopLocalModelHealth | null;
   offlineTasks: DesktopOfflineTask[];
+  offlineAgentRuns: DesktopOfflineAgentRun[];
+  offlineAgentSnapshots: Record<string, { approvals: Array<{ status: string; reason: string; decision?: Record<string, unknown>; target?: { path?: string; exists?: boolean; sha256?: string | null; mtimeMs?: number | null; sizeBytes?: number | null }; proposal?: { sha256?: string; sizeBytes?: number } }> }>;
   startupEnabled: boolean | null;
   fileRoot: DesktopFileWatchState | null;
   updateStatus: DesktopUpdateStatus | null;
@@ -59,6 +60,8 @@ const EMPTY_BRIDGE_STATE: DesktopBridgeState = {
   localModel: null,
   localModelHealth: null,
   offlineTasks: [],
+  offlineAgentRuns: [],
+  offlineAgentSnapshots: {},
   startupEnabled: null,
   fileRoot: null,
   updateStatus: null,
@@ -76,10 +79,7 @@ export function AdvancedFeaturesPage() {
   const queryClient = useQueryClient();
   const desktopApi = typeof window === "undefined" ? undefined : window.desktopApi;
   const desktopAvailable = Boolean(desktopApi);
-  const localRuntimeProfile = isLocalRuntimeProfile();
-  const visibleChapters = localRuntimeProfile
-    ? CHAPTERS.filter((chapter) => chapter.id !== "offline")
-    : CHAPTERS;
+  const visibleChapters = CHAPTERS;
   const [bridgeHealth, setBridgeHealth] = useState<DesktopBridgeHealth>(desktopAvailable ? "loading" : "web-fallback");
   const marketplace = useQuery({
     queryKey: ["plugins", "marketplace"],
@@ -104,6 +104,10 @@ export function AdvancedFeaturesPage() {
     model: "llama3.1",
   });
   const [offlinePrompt, setOfflinePrompt] = useState("整理当前离线工作，列出下一步。");
+  const [offlineAgentPrompt, setOfflineAgentPrompt] = useState("检查当前发布证据并给出下一步。");
+  const [offlineAgentTool, setOfflineAgentTool] = useState<"none" | "workspace.list_files" | "workspace.read_text" | "workspace.write_text">("none");
+  const [offlineAgentPath, setOfflineAgentPath] = useState("README.md");
+  const [offlineAgentContent, setOfflineAgentContent] = useState("离线 Agent 审批后写入的内容。");
   const [feedbackDraft, setFeedbackDraft] = useState<Pick<DesktopFeedbackPayload, "title" | "description" | "category">>({
     title: "桌面工作台反馈",
     description: "桌面原生设置已在工作台验证。",
@@ -125,16 +129,20 @@ export function AdvancedFeaturesPage() {
     setBridgeHealth("loading");
     setBridgeError(null);
     try {
-      const [profiles, windows, localModel, offlineTasks, startupEnabled, fileRoot, updateStatus, syncStatus] = await Promise.all([
+      const [profiles, windows, localModel, offlineTasks, offlineAgentRuns, startupEnabled, fileRoot, updateStatus, syncStatus] = await Promise.all([
         desktopApi.profile?.list?.(),
         desktopApi.window?.list?.(),
         desktopApi.localModel?.getSettings?.(),
         desktopApi.offline?.listTasks?.(),
+        desktopApi.offlineAgent?.listRuns?.(),
         desktopApi.system?.getStartupEnabled?.(),
         desktopApi.file?.getWorkspaceRoot?.(),
         desktopApi.updates?.getStatus?.(),
         desktopApi.sync?.getStatus?.(),
       ]);
+      const offlineAgentSnapshots = Object.fromEntries(await Promise.all(
+        (offlineAgentRuns?.items ?? []).filter((run) => run.status === "WAITING_APPROVAL").map(async (run) => [run.id, await desktopApi.offlineAgent?.getRun?.(run.id)]),
+      ));
       setBridgeState((state) => ({
         profiles: profiles?.profiles ?? [],
         activeProfileId: profiles?.activeProfileId ?? "",
@@ -142,6 +150,8 @@ export function AdvancedFeaturesPage() {
         localModel: localModel ?? null,
         localModelHealth: state.localModelHealth,
         offlineTasks: offlineTasks?.items ?? [],
+        offlineAgentRuns: offlineAgentRuns?.items ?? [],
+        offlineAgentSnapshots: (offlineAgentSnapshots ?? {}) as DesktopBridgeState["offlineAgentSnapshots"],
         startupEnabled: typeof startupEnabled === "boolean" ? startupEnabled : null,
         fileRoot: fileRoot ?? null,
         updateStatus: updateStatus ?? null,
@@ -246,6 +256,46 @@ export function AdvancedFeaturesPage() {
     mutationFn: async (offlineTaskId: string) => {
       if (!desktopApi?.offline?.promoteResultToPendingAgentTask) throw new Error("离线任务同步 API 不可用");
       return desktopApi.offline.promoteResultToPendingAgentTask(offlineTaskId);
+    },
+    onSuccess: refreshBridge,
+  });
+  const offlineAgentMutation = useMutation({
+    mutationFn: async () => {
+      if (!desktopApi?.offlineAgent?.run) throw new Error("完整离线 Agent API 不可用");
+      const toolRequest = offlineAgentTool === "none"
+        ? null
+        : {
+            name: offlineAgentTool,
+            input: offlineAgentTool === "workspace.write_text"
+              ? { path: offlineAgentPath, content: offlineAgentContent }
+              : { path: offlineAgentPath },
+          };
+      return desktopApi.offlineAgent.run({
+        prompt: offlineAgentPrompt,
+        useLocalModel: localModelDraft.enabled,
+        toolRequest,
+      });
+    },
+    onSuccess: refreshBridge,
+  });
+  const offlineAgentCancelMutation = useMutation({
+    mutationFn: async (runId: string) => {
+      if (!desktopApi?.offlineAgent?.cancel) throw new Error("离线 Agent 取消 API 不可用");
+      return desktopApi.offlineAgent.cancel(runId);
+    },
+    onSuccess: refreshBridge,
+  });
+  const offlineAgentResumeMutation = useMutation({
+    mutationFn: async (runId: string) => {
+      if (!desktopApi?.offlineAgent?.resume) throw new Error("离线 Agent 恢复 API 不可用");
+      return desktopApi.offlineAgent.resume(runId);
+    },
+    onSuccess: refreshBridge,
+  });
+  const offlineAgentApprovalMutation = useMutation({
+    mutationFn: async ({ approvalId, approved }: { approvalId: string; approved: boolean }) => {
+      if (!desktopApi?.offlineAgent?.decideApproval) throw new Error("离线 Agent 审批 API 不可用");
+      return desktopApi.offlineAgent.decideApproval(approvalId, approved);
     },
     onSuccess: refreshBridge,
   });
@@ -602,7 +652,7 @@ export function AdvancedFeaturesPage() {
               </div>
             </DocumentChapter>
 
-            {!localRuntimeProfile ? <DocumentChapter
+            <DocumentChapter
               id="offline"
               icon={<WifiOff className="h-4 w-4" />}
               title="离线执行"
@@ -715,6 +765,101 @@ export function AdvancedFeaturesPage() {
                   ) : null}
                 </Disclosure>
               </div>
+              <DocumentPanel>
+                <SectionEyebrow icon={<WifiOff className="h-3.5 w-3.5" />} label="完整离线 Agent" />
+                <div className="grid gap-2">
+                  <Textarea
+                    aria-label="完整离线 Agent 目标"
+                    value={offlineAgentPrompt}
+                    onChange={(event) => setOfflineAgentPrompt(event.target.value)}
+                    className="min-h-20"
+                  />
+                  <label className="grid gap-1 text-xs font-medium text-slate-700">
+                    <span>受限工具</span>
+                    <select
+                      aria-label="离线 Agent 受限工具"
+                      value={offlineAgentTool}
+                      onChange={(event) => {
+                        const nextTool = event.target.value as typeof offlineAgentTool;
+                        setOfflineAgentTool(nextTool);
+                        if (nextTool === "workspace.list_files") setOfflineAgentPath(".");
+                      }}
+                      className="h-9 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+                    >
+                      <option value="none">不使用工具</option>
+                      <option value="workspace.list_files">列出工作区文件（只读）</option>
+                      <option value="workspace.read_text">读取文本文件（只读）</option>
+                      <option value="workspace.write_text">写入文本文件（需审批）</option>
+                    </select>
+                  </label>
+                  {offlineAgentTool !== "none" ? (
+                    <Input
+                      aria-label="离线 Agent 工具路径"
+                      value={offlineAgentPath}
+                      onChange={(event) => setOfflineAgentPath(event.target.value)}
+                    />
+                  ) : null}
+                  {offlineAgentTool === "workspace.write_text" ? (
+                    <Textarea
+                      aria-label="离线 Agent 写入内容"
+                      value={offlineAgentContent}
+                      onChange={(event) => setOfflineAgentContent(event.target.value)}
+                    />
+                  ) : null}
+                  <Button
+                    type="button"
+                    onClick={() => offlineAgentMutation.mutate()}
+                    disabled={!desktopApi?.offlineAgent?.run || offlineAgentMutation.isPending}
+                    className="justify-self-start"
+                  >
+                    {offlineAgentMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <WifiOff className="h-3.5 w-3.5" />}
+                    启动离线 Agent
+                  </Button>
+                </div>
+              </DocumentPanel>
+              <ResultList
+                title="离线 Agent Runs"
+                emptyText="暂无完整离线 Agent Run"
+                items={bridgeState.offlineAgentRuns}
+                renderItem={(run) => {
+                  const approval = bridgeState.offlineAgentSnapshots[run.id]?.approvals.find(
+                    (item) => item.status === "PENDING",
+                  );
+                  const hasConflict = Boolean(approval?.decision && "conflict" in approval.decision);
+                  return <ListPanel key={run.id}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate font-semibold text-slate-900">{run.prompt}</span>
+                      <Badge tone={offlineAgentStatusTone(run.status)}>{offlineAgentStatusLabel(run.status)}</Badge>
+                    </div>
+                    {run.result ? <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-slate-600">{run.result}</pre> : null}
+                    {run.errorMessage ? <div className="mt-1 text-[11px] text-amber-700">{run.errorMessage}</div> : null}
+                    {run.status === "WAITING_APPROVAL" ? (() => {
+                      const target = approval?.target;
+                      const proposal = approval?.proposal;
+                      return target ? <div className="mt-2 text-[11px] text-slate-600">
+                        写入目标：<code>{target.path ?? "(未知路径)"}</code> · {target.exists ? "现有文件" : "新文件"} · 基线 {target.sha256 ? target.sha256.slice(0, 12) : "不存在"}<br />
+                        拟写内容：{proposal?.sizeBytes ?? 0} bytes · {proposal?.sha256 ? proposal.sha256.slice(0, 12) : "未知摘要"}{hasConflict ? " · 文件已变化，请重新发起审批" : ""}
+                      </div> : null;
+                    })() : null}
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {run.status === "WAITING_APPROVAL" && run.pendingApprovalId ? (
+                        <>
+                          <Button type="button" onClick={() => offlineAgentApprovalMutation.mutate({ approvalId: run.pendingApprovalId!, approved: true })} disabled={offlineAgentApprovalMutation.isPending || hasConflict}>批准写入</Button>
+                          <Button type="button" variant="secondary" onClick={() => offlineAgentApprovalMutation.mutate({ approvalId: run.pendingApprovalId!, approved: false })} disabled={offlineAgentApprovalMutation.isPending}>拒绝</Button>
+                          {hasConflict ? (
+                            <Button type="button" variant="secondary" onClick={() => void refreshBridge()}>
+                              <RefreshCw className="h-3.5 w-3.5" />
+                              刷新审批预览
+                            </Button>
+                          ) : null}
+                        </>
+                      ) : null}
+                      {run.status === "RUNNING" ? <Button type="button" variant="secondary" onClick={() => offlineAgentCancelMutation.mutate(run.id)} disabled={offlineAgentCancelMutation.isPending}>取消</Button> : null}
+                      {(["INTERRUPTED", "FAILED", "CANCELLED"] as DesktopOfflineAgentStatus[]).includes(run.status) ? <Button type="button" variant="secondary" onClick={() => offlineAgentResumeMutation.mutate(run.id)} disabled={offlineAgentResumeMutation.isPending}>恢复</Button> : null}
+                    </div>
+                  </ListPanel>;
+                }}
+              />
               <ResultList
                 title="离线任务结果"
                 emptyText="暂无离线任务"
@@ -742,7 +887,7 @@ export function AdvancedFeaturesPage() {
                   </ListPanel>
                 )}
               />
-            </DocumentChapter> : null}
+            </DocumentChapter>
 
             <DocumentChapter
               id="plugins"
@@ -970,6 +1115,25 @@ function HighContrastButton() {
 
 function offlineTaskSourceLabel(source: DesktopOfflineTask["modelSource"]) {
   return source === "local-model" ? "本地模型" : "确定性本地";
+}
+
+function offlineAgentStatusLabel(status: DesktopOfflineAgentStatus): string {
+  return {
+    PENDING: "排队中",
+    RUNNING: "执行中",
+    WAITING_APPROVAL: "等待审批",
+    INTERRUPTED: "可恢复",
+    COMPLETED: "已完成",
+    FAILED: "失败",
+    CANCELLED: "已取消",
+  }[status];
+}
+
+function offlineAgentStatusTone(status: DesktopOfflineAgentStatus): BadgeTone {
+  if (status === "COMPLETED") return "success";
+  if (status === "FAILED" || status === "CANCELLED") return "warning";
+  if (status === "WAITING_APPROVAL") return "info";
+  return "neutral";
 }
 
 function updateStateLabel(state?: DesktopUpdateState | null) {

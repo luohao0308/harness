@@ -13,6 +13,7 @@ from sqlalchemy import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.runtime_jobs.errors import RuntimeJobDeferredError
 from app.runtime_jobs.handlers import RuntimeJobHandler, default_runtime_job_handlers
 from app.runtime_jobs.repository import ClaimedRuntimeJob, RuntimeJobRepository
 
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_ALERT_EVALUATION_INTERVAL_SECONDS = 60
 DEFAULT_SUBAGENT_RECOVERY_INTERVAL_SECONDS = 30
+DEFAULT_TRIGGER_SOURCE_POLL_INTERVAL_SECONDS = 1
 
 
 class RuntimeJobLeaseLostError(RuntimeError):
@@ -59,6 +61,7 @@ class RuntimeJobCoordinator:
         team_tick_interval_seconds: float = 5,
         alert_evaluation_interval_seconds: float = DEFAULT_ALERT_EVALUATION_INTERVAL_SECONDS,
         subagent_recovery_interval_seconds: float = DEFAULT_SUBAGENT_RECOVERY_INTERVAL_SECONDS,
+        trigger_source_poll_interval_seconds: float = DEFAULT_TRIGGER_SOURCE_POLL_INTERVAL_SECONDS,
     ) -> None:
         self.engine = engine
         self.handlers = dict(
@@ -87,6 +90,12 @@ class RuntimeJobCoordinator:
                 payload={},
                 dedupe_key="subagent-recovery",
                 interval_seconds=subagent_recovery_interval_seconds,
+            ),
+            _PeriodicRuntimeJob(
+                kind="trigger_source_poll",
+                payload={},
+                dedupe_key="trigger-source-poll",
+                interval_seconds=trigger_source_poll_interval_seconds,
             ),
         )
         self._session_factory = sessionmaker(
@@ -164,6 +173,8 @@ class RuntimeJobCoordinator:
         heartbeat = asyncio.create_task(self._heartbeat(claim))
         try:
             await asyncio.to_thread(self._execute_fenced_handler, claim, handler)
+        except RuntimeJobDeferredError as exc:
+            self._record_deferred(claim, exc)
         except RuntimeJobLeaseLostError:
             logger.info(
                 "Runtime job execution rejected by lease fence",
@@ -185,6 +196,8 @@ class RuntimeJobCoordinator:
         claim: ClaimedRuntimeJob,
         handler: RuntimeJobHandler,
     ) -> dict[str, Any] | None:
+        if claim.kind == "trigger_invocation":
+            return self._execute_checkpointed_trigger_handler(claim, handler)
         with self._session_factory() as session:
             session.info["runtime_job_managed_transaction"] = True
             with session.begin():
@@ -193,12 +206,49 @@ class RuntimeJobCoordinator:
                     raise RuntimeJobLeaseLostError(
                         "job handler rejected before execution by lease fence"
                     )
-                result = handler(claim.payload, session)
+                payload = dict(claim.payload)
+                if claim.kind == "trigger_invocation":
+                    payload["_runtime_attempt"] = claim.attempt
+                result = handler(payload, session)
                 if not repository.complete(claim, result_json=result):
                     raise RuntimeJobLeaseLostError(
                         "job authoritative effects rejected by lease fence"
                     )
                 return result
+
+    def _execute_checkpointed_trigger_handler(
+        self,
+        claim: ClaimedRuntimeJob,
+        handler: RuntimeJobHandler,
+    ) -> dict[str, Any] | None:
+        with self._session_factory() as session:
+            repository = RuntimeJobRepository(session)
+            if not repository.owns_current_lease(claim):
+                raise RuntimeJobLeaseLostError(
+                    "trigger handler rejected before execution by lease fence"
+                )
+
+            def checkpoint() -> None:
+                if not RuntimeJobRepository(session).owns_current_lease(claim):
+                    session.rollback()
+                    raise RuntimeJobLeaseLostError(
+                        "trigger checkpoint rejected by lease fence"
+                    )
+                session.commit()
+
+            session.info["runtime_job_step_checkpoint"] = checkpoint
+            payload = {**claim.payload, "_runtime_attempt": claim.attempt}
+            try:
+                result = handler(payload, session)
+                if not RuntimeJobRepository(session).complete(claim, result_json=result):
+                    raise RuntimeJobLeaseLostError(
+                        "trigger completion rejected by lease fence"
+                    )
+                session.commit()
+                return result
+            except BaseException:
+                session.rollback()
+                raise
 
     async def _heartbeat(self, claim: ClaimedRuntimeJob) -> None:
         while True:
@@ -219,8 +269,49 @@ class RuntimeJobCoordinator:
     def _record_failure(self, claim: ClaimedRuntimeJob, error: str) -> None:
         retry_delay = min(30.0, 2 ** max(0, claim.attempt - 1))
         with self._session_factory.begin() as session:
-            RuntimeJobRepository(session).fail(
+            recorded = RuntimeJobRepository(session).fail(
                 claim,
                 error=error,
                 retry_delay_seconds=retry_delay,
             )
+            if recorded and claim.kind == "trigger_invocation":
+                self._sync_trigger_invocation_failure(
+                    session,
+                    claim=claim,
+                )
+
+    def _record_deferred(
+        self,
+        claim: ClaimedRuntimeJob,
+        deferred: RuntimeJobDeferredError,
+    ) -> None:
+        with self._session_factory.begin() as session:
+            RuntimeJobRepository(session).defer(
+                claim,
+                reason=deferred.reason,
+                delay_seconds=deferred.delay_seconds,
+            )
+
+    @staticmethod
+    def _sync_trigger_invocation_failure(
+        session: Session,
+        *,
+        claim: ClaimedRuntimeJob,
+    ) -> None:
+        from app.db.models import TriggerInvocation, utc_now
+
+        invocation_id = str(claim.payload.get("invocation_id", "")).strip()
+        invocation = session.get(TriggerInvocation, invocation_id) if invocation_id else None
+        if invocation is None:
+            return
+        now = utc_now()
+        invocation.attempt = max(invocation.attempt, claim.attempt)
+        invocation.error = f"Trigger execution attempt {claim.attempt} failed"
+        invocation.updated_at = now
+        if claim.attempt >= claim.max_attempts:
+            invocation.status = "FAILED"
+            invocation.completed_at = now
+        else:
+            invocation.status = "PLANNED"
+            invocation.completed_at = None
+        session.flush()

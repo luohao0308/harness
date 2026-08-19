@@ -124,12 +124,15 @@ export async function runOfflineSimpleTask(
   })
 }
 
-async function invokeLocalModel(
+export async function invokeLocalModel(
   prompt: string,
-  settings: DesktopLocalModelSettings
+  settings: DesktopLocalModelSettings,
+  externalSignal?: AbortSignal,
 ): Promise<string> {
   validateLocalModelSettings(settings)
   const controller = new AbortController()
+  const handleExternalAbort = () => controller.abort()
+  externalSignal?.addEventListener('abort', handleExternalAbort, { once: true })
   const timeout = setTimeout(() => controller.abort(), LOCAL_MODEL_TIMEOUT_MS)
   try {
     if (settings.provider === 'ollama') {
@@ -164,11 +167,17 @@ async function invokeLocalModel(
     return String(payload.choices?.[0]?.message?.content || '').trim() || deterministicOfflineResult(prompt)
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
+      if (externalSignal?.aborted) {
+        const cancelled = new Error('local model request cancelled')
+        cancelled.name = 'AbortError'
+        throw cancelled
+      }
       throw new Error('local model request timed out')
     }
     throw error
   } finally {
     clearTimeout(timeout)
+    externalSignal?.removeEventListener('abort', handleExternalAbort)
   }
 }
 

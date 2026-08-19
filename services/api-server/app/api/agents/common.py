@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.agents.context_router import (
@@ -114,6 +115,11 @@ from app.api.schemas import (
     KnowledgeSourceResponse,
     KnowledgeSourceScopeRequest,
     KnowledgeSourceUpdateRequest,
+    ProjectKnowledgeIndexActionRequest,
+    ProjectKnowledgeIndexCreateRequest,
+    ProjectKnowledgeIndexPage,
+    ProjectKnowledgeIndexResponse,
+    ProjectKnowledgeSyncRequest,
     ModelCallResponse,
     PromptAssemblyManifestResponse,
     RetrievalSessionResponse,
@@ -162,6 +168,8 @@ from app.db.models import (
     LocalAgentToolRequest,
     ModelCall,
     PromptAssemblyManifest,
+    ProjectKnowledgeFile,
+    ProjectKnowledgeIndex,
     RetrievalHit,
     RetrievalSession,
     Task,
@@ -181,6 +189,7 @@ from app.knowledge import (
     SOURCE_STATUS_DISABLED,
     KnowledgeGroundingResult,
     KnowledgeIngestionError,
+    ProjectKnowledgeIndexConflict,
     connector_validation_status,
     create_knowledge_lifecycle_audit,
     get_visible_knowledge_source,
@@ -188,6 +197,14 @@ from app.knowledge import (
     ingest_knowledge_source,
     knowledge_source_lifecycle_snapshot,
     list_knowledge_sources,
+    list_project_knowledge_indexes,
+    get_project_knowledge_index,
+    create_project_knowledge_index,
+    pause_project_knowledge_index,
+    project_knowledge_file_counts,
+    resume_project_knowledge_index,
+    sync_project_knowledge_snapshot,
+    unbind_project_knowledge_index,
 )
 from app.knowledge_connectors import (
     connector_counts_toward_complete_usable,

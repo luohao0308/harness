@@ -170,6 +170,68 @@ function langGraphWorkspacePayload() {
   };
 }
 
+function projectGroundingWorkspacePayload() {
+  const base = workspacePayload();
+  return {
+    ...base,
+    knowledge_grounding: {
+      local_status: "sufficient",
+      vector_capability: "pgvector",
+      grounded: true,
+      grounding_provider: "local_knowledge",
+      fixture_grounded: false,
+      verified_grounded: true,
+      grounding_verification_reason: "verified_source_binding",
+      evidence_message: "项目文档提供了真实依据。",
+      evidence_summary: "project evidence",
+      inferred_fallback: false,
+      fallback_reason: null,
+      selected_retrieval_session_id: "retrieval-1",
+      selected_prompt_manifest_id: null,
+      prompt_manifest: null,
+      policy_audits: [],
+      retrieval_hits: [
+        {
+          id: "hit-project-1",
+          chunk_id: "chunk-project-1",
+          web_source_id: null,
+          rank: 1,
+          score: 0.99,
+          source_kind: "local_knowledge",
+          document_id: "doc-project-1",
+          document_version: 4,
+          snippet: "Harness project knowledge",
+          metadata_json: {},
+          created_at: "2026-08-18T10:00:00Z",
+        },
+      ],
+      citations: [
+        {
+          id: "citation-project-1",
+          retrieval_hit_id: "hit-project-1",
+          citation_key: "[1]",
+          source_kind: "local_knowledge",
+          chunk_id: "chunk-project-1",
+          web_source_id: null,
+          claim_text: "Harness uses project knowledge",
+          quoted_text: "Harness project knowledge",
+          confidence: 0.99,
+          metadata_json: {
+            source_snapshot: {
+              project_uri: "project://docs/guide.md",
+              project_relative_path: "docs/guide.md",
+              project_file_sha256: "c".repeat(64),
+              document_version: 4,
+            },
+          },
+          created_at: "2026-08-18T10:00:00Z",
+        },
+      ],
+      web_sources: [],
+    },
+  };
+}
+
 function failedOrchestrationWorkspacePayload() {
   const base = workspacePayload();
   return {
@@ -283,6 +345,23 @@ afterEach(() => {
 });
 
 describe("RunDetailPage token optimizer evidence", () => {
+  it("renders safe project URI, file hash, and document version for citations", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const path = url.startsWith(apiBaseUrl) ? url.slice(apiBaseUrl.length) : url;
+      if (path === "/api/agents/runs/run-1/workspace") return jsonResponse(projectGroundingWorkspacePayload());
+      if (path === "/api/evals/datasets") return jsonResponse({ items: [], next_cursor: null });
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+
+    renderPage(fetchMock);
+
+    expect(await screen.findByText("project://docs/guide.md")).toBeInTheDocument();
+    expect(screen.getByText(`sha256:${"c".repeat(64)}`)).toBeInTheDocument();
+    expect(screen.getByText("document-version:4")).toBeInTheDocument();
+    expect(screen.queryByText(/\/Users\/private/)).not.toBeInTheDocument();
+  });
+
   it("renders context optimizer versions and policy hash", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

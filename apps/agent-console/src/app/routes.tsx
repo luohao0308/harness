@@ -10,6 +10,8 @@ import { isLocalRuntimeProfile } from "../lib/local-runtime";
 
 const AgentListPage = lazy(() => import("../features/agents/pages/AgentListPage").then((module) => ({ default: module.AgentListPage })));
 const AgentWorkspacePage = lazy(() => import("../features/agents/pages/AgentWorkspacePage").then((module) => ({ default: module.AgentWorkspacePage })));
+const AttentionCenterPage = lazy(() => import("../features/attention/pages/AttentionCenterPage").then((module) => ({ default: module.AttentionCenterPage })));
+const ChangeReviewPage = lazy(() => import("../features/changes/pages/ChangeReviewPage").then((module) => ({ default: module.ChangeReviewPage })));
 const LoginPage = lazy(() => import("../features/auth/pages/LoginPage").then((module) => ({ default: module.LoginPage })));
 const OAuthCallbackPage = lazy(() => import("../features/auth/pages/OAuthCallbackPage").then((module) => ({ default: module.OAuthCallbackPage })));
 const RegisterPage = lazy(() => import("../features/auth/pages/RegisterPage").then((module) => ({ default: module.RegisterPage })));
@@ -65,6 +67,8 @@ export const router = createConsoleRouter([
       { path: "agents", element: protectedElement(<AgentListPage />) },
       { path: "agents/:agentId/workspace", element: protectedElement(<AgentWorkspacePage />) },
       { path: "agents/:agentId/chat", element: <Navigate to="/agents/default/workspace" replace /> },
+      { path: "attention", element: protectedElement(<AttentionCenterPage />) },
+      { path: "changes", element: protectedElement(<ChangeReviewPage />) },
       { path: "teams", element: protectedElement(<TeamListPage />) },
       { path: "teams/:teamId", element: protectedElement(<TeamPage />) },
       { path: "runs", element: protectedElement(<RunHistoryPage />) },

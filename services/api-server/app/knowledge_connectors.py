@@ -95,7 +95,7 @@ def connector_provider_key(settings_json: dict[str, Any] | None, *, source_type:
     ).strip().lower()
     if provider:
         return provider
-    if source_type in {"text", "markdown", "document"}:
+    if source_type in {"text", "markdown", "document", "project"}:
         return "uploaded_file"
     return source_type.strip().lower() or "uploaded_file"
 
