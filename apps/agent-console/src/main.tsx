@@ -9,6 +9,7 @@ import { AuthProvider } from "./features/auth/AuthProvider";
 import { installDesktopBridge } from "./lib/desktop-bridge";
 import { installGlobalErrorReporter } from "./lib/error-reporter";
 import { initializeLocalRuntimeSession } from "./lib/local-runtime";
+import { installProjectKnowledgeSync } from "./lib/project-knowledge-sync";
 import "./styles.css";
 
 if (typeof window !== "undefined" && window.localStorage.getItem("harness.a11y.high_contrast") === "1") {
@@ -29,6 +30,7 @@ const queryClient = new QueryClient({
 void initializeLocalRuntimeSession()
   .then(() => {
     installDesktopBridge(router);
+    installProjectKnowledgeSync();
     ReactDOM.createRoot(document.getElementById("root")!).render(
       <React.StrictMode>
         <ErrorBoundary scope="app-root">

@@ -9,6 +9,7 @@ import type {
   LocalRuntimeModelDiscovery,
   LocalRuntimeModelDiscoveryInput,
   LocalRuntimeModelStatus,
+  DesktopWorkspaceAuthorization,
 } from '../preload-api'
 
 export type LocalRuntimeModelErrorCode =
@@ -47,6 +48,8 @@ export type LocalRuntimeEndpoint = HarnessdReadyHandshake & {
   rendererUrl: string
 }
 
+export type LocalRuntimeStartupDiagnostic = 'sidecar_spawned' | 'sidecar_ready'
+
 export type LocalRuntimePaths = {
   runtimeDataDir: string
   logDir: string
@@ -73,6 +76,7 @@ export type LocalRuntimeManagerOptions = {
   desktopSessionRenewalMs?: number
   desktopSessionRetryMs?: number
   onEndpoint?: (endpoint: LocalRuntimeEndpoint) => void | Promise<void>
+  onStartupDiagnostic?: (milestone: LocalRuntimeStartupDiagnostic) => void
   onUnavailable?: (error: Error) => void
   skipRuntimeVerification?: boolean
 }
@@ -118,6 +122,43 @@ export function resolveLocalRuntimePaths(options: Pick<LocalRuntimeManagerOption
 }
 
 export class LocalRuntimeManager {
+  async authorizeWorkspace(
+    profileId: string,
+    rootPath: string,
+  ): Promise<DesktopWorkspaceAuthorization> {
+    const endpoint = this.requireEndpoint()
+    const response = await this.options.fetchRuntime(
+      new URL('/api/local-runtime/workspace-authorization', endpoint.origin),
+      {
+        method: 'POST',
+        headers: this.bootstrapHeaders(true),
+        body: JSON.stringify({ profile_id: profileId, root_path: rootPath }),
+        redirect: 'error',
+      },
+    )
+    if (!response.ok) throw new Error(`workspace authorization failed: ${response.status}`)
+    const body = await response.json() as {
+      authorization?: unknown
+      label?: unknown
+      expires_at?: unknown
+    }
+    if (
+      typeof body.authorization !== 'string'
+      || !body.authorization
+      || typeof body.label !== 'string'
+      || !body.label
+      || typeof body.expires_at !== 'string'
+      || !body.expires_at
+    ) {
+      throw new Error('workspace authorization returned an invalid response')
+    }
+    return {
+      authorization: body.authorization,
+      label: body.label,
+      expiresAt: body.expires_at,
+    }
+  }
+
   private readonly options: Required<Pick<LocalRuntimeManagerOptions,
     'spawnRuntime' | 'fetchRuntime' | 'createSecrets' | 'startupTimeoutMs' | 'healthPollMs' |
     'shutdownTimeoutMs' | 'maxRestarts' | 'initialBackoffMs' | 'desktopSessionRenewalMs' |
@@ -340,6 +381,7 @@ export class LocalRuntimeManager {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     })
+    this.emitStartupDiagnostic('sidecar_spawned')
     // The packaged runtime logs to stderr. Leaving this pipe unread eventually
     // blocks every request on Python's logging lock once the OS buffer fills.
     child.stderr.resume()
@@ -355,6 +397,7 @@ export class LocalRuntimeManager {
       const endpoint = await endpointPromise
       this.assertRuntimeIdentity(endpoint)
       await this.pollHealth(endpoint, child)
+      this.emitStartupDiagnostic('sidecar_ready')
       verifiedRuntimeEndpoint = endpoint
       await this.options.onEndpoint?.(endpoint)
       child.once('exit', (code, signal) => this.handleUnexpectedExit(child, code, signal))
@@ -364,6 +407,14 @@ export class LocalRuntimeManager {
       if (this.child === child) this.child = null
       await terminateChild(child, this.options.shutdownTimeoutMs)
       throw error
+    }
+  }
+
+  private emitStartupDiagnostic(milestone: LocalRuntimeStartupDiagnostic): void {
+    try {
+      this.options.onStartupDiagnostic?.(milestone)
+    } catch {
+      // Startup diagnostics are observability only and cannot block runtime startup.
     }
   }
 
@@ -479,7 +530,7 @@ export class LocalRuntimeManager {
       void this.renewDesktopSession().catch((error: unknown) => {
         if (this.stopping || generation !== this.desktopSessionGeneration) return
         const message = error instanceof Error ? error.message : String(error)
-        console.error(`Harness desktop session renewal failed: ${message}`)
+        console.error(`Forge Harness desktop session renewal failed: ${message}`)
         this.scheduleDesktopSessionRenewal(generation, this.options.desktopSessionRetryMs)
       })
     }, Math.max(1, delayMs))

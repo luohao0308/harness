@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import hmac
-import json
 import re
 import secrets
+import subprocess
+from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.agents.planner import PLANNER_PROMPT_VERSION, DeterministicPlanner
 from app.agents.registry import ensure_default_agents
 from app.api.schemas import (
     AgentTriggerCreateRequest,
@@ -19,22 +19,24 @@ from app.api.schemas import (
     AgentTriggerPage,
     AgentTriggerResponse,
     AgentTriggerUpdateRequest,
+    TriggerInvocationPage,
+    TriggerInvocationResponse,
     WebhookTriggerRequest,
     WebhookTriggerResponse,
 )
-from app.db.models import Agent, ExecutionPlan, Task, Trigger, utc_now
+from app.core.config import get_settings
+from app.db.models import Agent, Task, Trigger, TriggerInvocation, utc_now
 from app.db.session import get_db_session
-from app.events.event_store import EventStore
-from app.events.event_types import EventType
+from app.local_runtime.workspace_authorization import WORKSPACE_AUTHORIZATION_STORE
 from app.security.auth import Principal, require_permission_value
 from app.security.jwt_utils import hash_api_key
 from app.security.rbac import Permission
+from app.triggers.service import TriggerInvocationRejected, create_trigger_invocation
 
 router = APIRouter(tags=["triggers"])
 DbSession = Annotated[Session, Depends(get_db_session)]
 
 _ENDPOINT_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{2,127}$")
-_MAX_PAYLOAD_PREVIEW = 1200
 
 
 @router.get(
@@ -55,6 +57,7 @@ def list_agent_triggers(
             .where(
                 Trigger.organization_id == principal.organization_id,
                 Trigger.agent_id == agent_id,
+                Trigger.deleted_at.is_(None),
             )
             .order_by(Trigger.created_at.desc(), Trigger.id.asc())
         ).scalars()
@@ -76,15 +79,28 @@ def create_agent_trigger(
 ) -> AgentTriggerCreateResponse:
     require_permission_value(principal, Permission.AGENT_CREATE)
     _owned_agent(agent_id=agent_id, session=session, principal=principal)
-    endpoint_path = _normalize_endpoint_path(payload.endpoint_path, agent_id=agent_id)
-    secret = f"htrg_{secrets.token_urlsafe(32)}"
+    if payload.type in {"schedule", "file", "git"} and get_settings().runtime_profile != "local":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{payload.type} triggers are only available in the local runtime profile",
+        )
+    config_json = _validated_runtime_config(payload, principal=principal)
+    endpoint_path = (
+        _normalize_endpoint_path(payload.endpoint_path, agent_id=agent_id)
+        if payload.type == "webhook"
+        else None
+    )
+    secret = f"htrg_{secrets.token_urlsafe(32)}" if payload.type == "webhook" else None
     now = utc_now()
     trigger = Trigger(
         organization_id=principal.organization_id,
         agent_id=agent_id,
         type=payload.type,
+        name=payload.name or endpoint_path or payload.type,
+        config_json=config_json,
+        runtime_state_json={},
         endpoint_path=endpoint_path,
-        secret_hash=hash_api_key(secret),
+        secret_hash=hash_api_key(secret) if secret is not None else None,
         enabled=payload.enabled,
         created_by=principal.user_id,
         created_at=now,
@@ -125,6 +141,26 @@ def update_agent_trigger(
     )
     if payload.enabled is not None:
         trigger.enabled = payload.enabled
+    if payload.name is not None:
+        trigger.name = payload.name
+    if payload.config_json is not None:
+        validated = AgentTriggerCreateRequest(
+            type=trigger.type,
+            name=trigger.name,
+            config_json=payload.config_json,
+            endpoint_path=trigger.endpoint_path,
+            enabled=trigger.enabled,
+        )
+        if (
+            trigger.type in {"schedule", "file", "git"}
+            and get_settings().runtime_profile != "local"
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"{trigger.type} triggers are only available in the local runtime profile",
+            )
+        trigger.config_json = _validated_runtime_config(validated, principal=principal)
+        trigger.runtime_state_json = {}
     trigger.updated_at = utc_now()
     session.commit()
     session.refresh(trigger)
@@ -150,7 +186,9 @@ def delete_agent_trigger(
         session=session,
         organization_id=principal.organization_id,
     )
-    session.delete(trigger)
+    trigger.deleted_at = utc_now()
+    trigger.enabled = False
+    trigger.updated_at = utc_now()
     session.commit()
     return None
 
@@ -166,48 +204,140 @@ async def invoke_webhook_trigger(
     request: Request,
     session: DbSession,
     x_harness_trigger_secret: Annotated[str | None, Header()] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> WebhookTriggerResponse:
+    if not get_settings().trigger_automation_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Trigger automation is disabled",
+        )
     trigger = session.execute(
         select(Trigger).where(Trigger.endpoint_path == endpoint_path)
     ).scalar_one_or_none()
-    if trigger is None or not trigger.enabled:
+    if (
+        trigger is None
+        or trigger.deleted_at is not None
+        or not trigger.enabled
+        or trigger.type != "webhook"
+    ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trigger not found")
     supplied_secret = (x_harness_trigger_secret or "").strip()
     if not supplied_secret or not hmac.compare_digest(
         hash_api_key(supplied_secret),
-        trigger.secret_hash,
+        trigger.secret_hash or "",
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid trigger secret",
         )
-    agent = session.execute(
-        select(Agent).where(
-            Agent.id == trigger.agent_id,
-            or_(
-                Agent.organization_id == trigger.organization_id,
-                Agent.organization_id.is_(None),
-            ),
+    try:
+        invocation, _created = create_trigger_invocation(
+            trigger=trigger,
+            idempotency_key=idempotency_key,
+            source="webhook",
+            payload_summary={
+                "payload": request_payload.payload,
+                "source_host": request.client.host if request.client else None,
+            },
+            goal=request_payload.goal,
+            title=request_payload.title,
+            session=session,
         )
-    ).scalar_one_or_none()
-    if agent is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    run = _create_trigger_plan_run(
-        trigger=trigger,
-        agent=agent,
-        request_payload=request_payload,
-        source_host=request.client.host if request.client else None,
-        session=session,
-    )
-    trigger.last_triggered_at = utc_now()
-    trigger.updated_at = utc_now()
+    except TriggerInvocationRejected as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    run = session.get(Task, invocation.run_id) if invocation.run_id else None
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Trigger invocation has no Run",
+        )
     session.commit()
     return WebhookTriggerResponse(
         run_id=run.id,
-        agent_id=agent.id,
+        agent_id=trigger.agent_id,
         status=run.status,
         trigger_id=trigger.id,
+        invocation_id=invocation.id,
     )
+
+
+@router.get(
+    "/agents/{agent_id}/triggers/{trigger_id}/invocations",
+    response_model=TriggerInvocationPage,
+)
+def list_trigger_invocations(
+    agent_id: str,
+    trigger_id: str,
+    session: DbSession,
+    principal: Principal,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> TriggerInvocationPage:
+    require_permission_value(principal, Permission.AGENT_READ)
+    _owned_agent(agent_id=agent_id, session=session, principal=principal)
+    _owned_trigger(
+        agent_id=agent_id,
+        trigger_id=trigger_id,
+        session=session,
+        organization_id=principal.organization_id,
+        include_deleted=True,
+    )
+    items = list(
+        session.execute(
+            select(TriggerInvocation)
+            .where(
+                TriggerInvocation.trigger_id == trigger_id,
+                TriggerInvocation.organization_id == principal.organization_id,
+            )
+            .order_by(TriggerInvocation.created_at.desc(), TriggerInvocation.id.desc())
+            .limit(limit)
+        ).scalars()
+    )
+    return TriggerInvocationPage(
+        items=[_invocation_response(item, session=session) for item in items]
+    )
+
+
+@router.get(
+    "/agents/{agent_id}/triggers/{trigger_id}/invocations/{invocation_id}",
+    response_model=TriggerInvocationResponse,
+)
+def get_trigger_invocation(
+    agent_id: str,
+    trigger_id: str,
+    invocation_id: str,
+    session: DbSession,
+    principal: Principal,
+) -> TriggerInvocationResponse:
+    require_permission_value(principal, Permission.AGENT_READ)
+    _owned_agent(agent_id=agent_id, session=session, principal=principal)
+    _owned_trigger(
+        agent_id=agent_id,
+        trigger_id=trigger_id,
+        session=session,
+        organization_id=principal.organization_id,
+        include_deleted=True,
+    )
+    invocation = session.execute(
+        select(TriggerInvocation).where(
+            TriggerInvocation.id == invocation_id,
+            TriggerInvocation.trigger_id == trigger_id,
+            TriggerInvocation.organization_id == principal.organization_id,
+        )
+    ).scalar_one_or_none()
+    if invocation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trigger invocation not found",
+        )
+    return _invocation_response(invocation, session=session)
 
 
 def _owned_agent(*, agent_id: str, session: Session, principal: Principal) -> Agent:
@@ -233,14 +363,16 @@ def _owned_trigger(
     trigger_id: str,
     session: Session,
     organization_id: str,
+    include_deleted: bool = False,
 ) -> Trigger:
-    trigger = session.execute(
-        select(Trigger).where(
-            Trigger.id == trigger_id,
-            Trigger.agent_id == agent_id,
-            Trigger.organization_id == organization_id,
-        )
-    ).scalar_one_or_none()
+    filters = [
+        Trigger.id == trigger_id,
+        Trigger.agent_id == agent_id,
+        Trigger.organization_id == organization_id,
+    ]
+    if not include_deleted:
+        filters.append(Trigger.deleted_at.is_(None))
+    trigger = session.execute(select(Trigger).where(*filters)).scalar_one_or_none()
     if trigger is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trigger not found")
     return trigger
@@ -257,121 +389,186 @@ def _normalize_endpoint_path(value: str | None, *, agent_id: str) -> str:
     return endpoint_path
 
 
-def _trigger_response(trigger: Trigger) -> AgentTriggerResponse:
-    return AgentTriggerResponse.model_validate(trigger)
-
-
-def _create_trigger_plan_run(
+def _validated_runtime_config(
+    payload: AgentTriggerCreateRequest,
     *,
-    trigger: Trigger,
-    agent: Agent,
-    request_payload: WebhookTriggerRequest,
-    source_host: str | None,
+    principal: Principal | None = None,
+) -> dict:
+    config = dict(payload.config_json)
+    if payload.type not in {"file", "git"}:
+        return config
+    authorization_value = config.pop("workspace_authorization", None)
+    if authorization_value is None:
+        if principal is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Workspace authorization is required",
+            )
+        return _validated_legacy_runtime_config(payload, config=config)
+    if principal is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Workspace authorization principal is required",
+        )
+    authorization = str(authorization_value)
+    settings = get_settings()
+    grant = WORKSPACE_AUTHORIZATION_STORE.verify(
+        authorization,
+        signing_secret=settings.local_desktop_bootstrap_token,
+        user_id=principal.user_id,
+        organization_id=principal.organization_id,
+    )
+    if grant is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid workspace authorization",
+        )
+    try:
+        root = grant.root_path.resolve(strict=True)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Authorized workspace is no longer available",
+        ) from exc
+    if not root.is_dir() or root != grant.root_path:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Authorized workspace is no longer available",
+        )
+    config["workspace_profile_id"] = grant.profile_id
+    if payload.type == "file":
+        config["workspace_root"] = str(root)
+        config["workspace_root_label"] = grant.label
+        if "max_bytes" in config and "max_file_bytes" not in config:
+            config["max_file_bytes"] = config.pop("max_bytes")
+        return config
+    try:
+        top_level = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=root,
+            shell=False,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+        git_root = Path(top_level).resolve(strict=True)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="repo_root must be inside a Git worktree",
+        ) from exc
+    if git_root != root:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Authorized workspace must be the Git top-level directory",
+        )
+    config["repo_root"] = str(root)
+    config["repo_root_label"] = grant.label
+    return config
+
+
+def _validated_legacy_runtime_config(
+    payload: AgentTriggerCreateRequest,
+    *,
+    config: dict,
+) -> dict:
+    field_name = (
+        "workspace_root"
+        if payload.type == "file" or "workspace_root" in config
+        else "repo_root"
+    )
+    try:
+        root = Path(str(config[field_name])).expanduser().resolve(strict=True)
+    except (KeyError, OSError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{field_name} must be an existing local directory",
+        ) from exc
+    if not root.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{field_name} must be an existing local directory",
+        )
+    config[field_name] = str(root)
+    if payload.type == "file":
+        if "max_bytes" in config and "max_file_bytes" not in config:
+            config["max_file_bytes"] = config.pop("max_bytes")
+        return config
+
+    repo_candidate = Path(
+        str(config.get("repo_root", ".") if field_name == "workspace_root" else ".")
+    ).expanduser()
+    try:
+        repo_root = (
+            repo_candidate if repo_candidate.is_absolute() else root / repo_candidate
+        ).resolve(strict=True)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="repo_root must be an existing directory inside workspace_root",
+        ) from exc
+    if not repo_root.is_dir() or (repo_root != root and root not in repo_root.parents):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="repo_root must be an existing directory inside workspace_root",
+        )
+    try:
+        top_level = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=repo_root,
+            shell=False,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+        git_root = Path(top_level).resolve(strict=True)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="repo_root must be inside a Git worktree",
+        ) from exc
+    if git_root != root and root not in git_root.parents and git_root not in root.parents:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Git worktree must be within workspace_root",
+        )
+    config["repo_root"] = str(repo_root)
+    return config
+
+
+def _trigger_response(trigger: Trigger) -> AgentTriggerResponse:
+    response = AgentTriggerResponse.model_validate(trigger)
+    config = dict(trigger.config_json or {})
+    for field_name in ("workspace_root", "repo_root"):
+        raw_path = config.pop(field_name, None)
+        if raw_path and f"{field_name}_label" not in config:
+            config[f"{field_name}_label"] = Path(str(raw_path)).name or "workspace"
+    config.pop("workspace_profile_id", None)
+    config.pop("workspace_authorization", None)
+    return response.model_copy(update={"config_json": config})
+
+
+def _invocation_response(
+    invocation: TriggerInvocation,
+    *,
     session: Session,
-) -> Task:
-    now = utc_now()
-    goal = _run_goal(request_payload)
-    run = Task(
-        organization_id=trigger.organization_id,
-        agent_id=agent.id,
-        created_by=f"trigger:{trigger.id}",
-        title=request_payload.title or f"Webhook trigger {trigger.endpoint_path}",
-        goal=goal,
-        status="CREATED",
-        model_provider=agent.model_provider or "default",
-        model_name=agent.model_name or "default",
-        max_runtime_seconds=1800,
-        max_subagents=5,
-        enable_sandbox=True,
-        enable_network=False,
-        created_at=now,
-        updated_at=now,
-    )
-    session.add(run)
-    session.flush()
-    event_store = EventStore(session)
-    event_store.append(
-        task_id=run.id,
-        event_type=EventType.TASK_CREATED,
-        payload_json={
-            "task_id": run.id,
-            "title": run.title,
-            "goal": run.goal,
-            "agent_id": agent.id,
-            "mode": "webhook_trigger",
-            "trigger_id": trigger.id,
-        },
-        actor_type="trigger",
-        actor_id=trigger.id,
-    )
-    event_store.append(
-        task_id=run.id,
-        event_type=EventType.TRIGGER_INVOKED,
-        payload_json={
-            "trigger_id": trigger.id,
-            "endpoint_path": trigger.endpoint_path,
-            "agent_id": agent.id,
-            "source_host": source_host,
-            "payload_keys": sorted(request_payload.payload.keys()),
-        },
-        actor_type="trigger",
-        actor_id=trigger.id,
-    )
-    run.status = "PLANNING"
-    run.updated_at = utc_now()
-    event_store.append(
-        task_id=run.id,
-        event_type=EventType.PLAN_REQUESTED,
-        payload_json={
-            "task_id": run.id,
-            "goal": run.goal,
-            "agent_id": agent.id,
-            "mode": "webhook_trigger",
-            "prompt_version": PLANNER_PROMPT_VERSION,
-        },
-        actor_type="trigger",
-        actor_id=trigger.id,
-    )
-    plan = DeterministicPlanner().create_plan(run)
-    plan_row = ExecutionPlan(
-        task_id=run.id,
-        version=1,
-        status="GENERATED",
-        plan_json=plan.model_dump(),
-        created_at=utc_now(),
-    )
-    session.add(plan_row)
-    session.flush()
-    event_store.append(
-        task_id=run.id,
-        event_type=EventType.PLAN_GENERATED,
-        payload_json={
-            "plan_id": plan_row.id,
-            "plan": plan.model_dump(),
-            "agent_id": agent.id,
-            "mode": "webhook_trigger",
-            "prompt_version": PLANNER_PROMPT_VERSION,
-            "trace_summary": "Webhook trigger created a planned Agent Run.",
-        },
-        actor_type="trigger",
-        actor_id=trigger.id,
-    )
-    run.status = "PLANNED"
-    run.updated_at = utc_now()
-    session.flush()
-    return run
-
-
-def _run_goal(request_payload: WebhookTriggerRequest) -> str:
-    base_goal = (request_payload.goal or "Handle webhook trigger payload").strip()
-    if not request_payload.payload:
-        return base_goal
-    preview = json.dumps(
-        request_payload.payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        default=str,
-    )
-    if len(preview) > _MAX_PAYLOAD_PREVIEW:
-        preview = preview[: _MAX_PAYLOAD_PREVIEW - 3] + "..."
-    return f"{base_goal}\n\nWebhook payload preview:\n{preview}"
+) -> TriggerInvocationResponse:
+    response = TriggerInvocationResponse.model_validate(invocation)
+    run = session.get(Task, invocation.run_id) if invocation.run_id else None
+    if run is None:
+        return response
+    status_map = {
+        "COMPLETED": "SUCCEEDED",
+        "FAILED": "FAILED",
+        "CANCELLED": "FAILED",
+        "WAITING_APPROVAL": "WAITING_APPROVAL",
+    }
+    projected = status_map.get(run.status)
+    if not projected:
+        return response
+    update: dict[str, object] = {"status": projected}
+    if projected in {"SUCCEEDED", "FAILED"} and response.completed_at is None:
+        update["completed_at"] = run.completed_at
+    return response.model_copy(update=update)

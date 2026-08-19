@@ -17,7 +17,11 @@ from app.db.session import (
     create_database_engine,
 )
 from app.db.sqlite_backup import backup_sqlite_database
-from app.db.sqlite_candidate_migration import migrate_sqlite_candidate
+from app.db.sqlite_candidate_migration import (
+    create_fresh_sqlite_candidate,
+    install_fresh_sqlite_template,
+    migrate_sqlite_candidate,
+)
 from app.db.sqlite_integrity import SQLiteIntegrityError, check_sqlite_integrity
 from app.db.sqlite_runtime_directory import resolve_sqlite_runtime_paths
 from app.db.sqlite_runtime_lock import SQLiteRuntimeLock, SQLiteRuntimeLockUnavailable
@@ -197,6 +201,61 @@ def test_fresh_candidate_migration_reaches_head_and_switches_manifest(tmp_path: 
             assert session.scalar(select(func.count()).select_from(AgentEvent)) == 0
     finally:
         engine.dispose()
+
+
+def test_fresh_template_install_reaches_head_without_application_rows(tmp_path: Path) -> None:
+    template = tmp_path / "runtime-template.sqlite3"
+    create_fresh_sqlite_candidate(template, alembic_ini=ALEMBIC_INI)
+    paths = resolve_sqlite_runtime_paths(tmp_path / "Electron User Data")
+
+    installed = install_fresh_sqlite_template(
+        paths,
+        template_path=template,
+        alembic_ini=ALEMBIC_INI,
+    )
+
+    assert installed == paths.default_database_path
+    assert paths.active_database_path() == installed
+    assert check_sqlite_integrity(installed).quick_check == ("ok",)
+    connection = sqlite3.connect(installed)
+    try:
+        assert connection.execute("SELECT count(*) FROM alembic_version").fetchone() == (1,)
+        assert connection.execute("SELECT count(*) FROM users").fetchone() == (0,)
+        assert connection.execute("SELECT count(*) FROM organizations").fetchone() == (0,)
+        assert connection.execute("SELECT count(*) FROM tasks").fetchone() == (0,)
+    finally:
+        connection.close()
+
+
+def test_invalid_template_falls_back_to_canonical_migration(tmp_path: Path) -> None:
+    template = tmp_path / "runtime-template.sqlite3"
+    template.write_bytes(b"not sqlite")
+    paths = resolve_sqlite_runtime_paths(tmp_path / "Electron User Data")
+
+    assert install_fresh_sqlite_template(
+        paths,
+        template_path=template,
+        alembic_ini=ALEMBIC_INI,
+    ) is None
+    assert not paths.default_database_path.exists()
+
+    migrated = migrate_sqlite_candidate(paths, alembic_ini=ALEMBIC_INI)
+    assert migrated == paths.default_database_path
+    assert check_sqlite_integrity(migrated).quick_check == ("ok",)
+
+
+def test_existing_runtime_database_bypasses_template_install(tmp_path: Path) -> None:
+    paths = resolve_sqlite_runtime_paths(tmp_path / "Electron User Data")
+    active = migrate_sqlite_candidate(paths, alembic_ini=ALEMBIC_INI)
+    template = tmp_path / "runtime-template.sqlite3"
+    create_fresh_sqlite_candidate(template, alembic_ini=ALEMBIC_INI)
+
+    assert install_fresh_sqlite_template(
+        paths,
+        template_path=template,
+        alembic_ini=ALEMBIC_INI,
+    ) is None
+    assert paths.active_database_path() == active
 
 
 def test_restart_reuses_current_head_and_prunes_unreferenced_candidates(tmp_path: Path) -> None:

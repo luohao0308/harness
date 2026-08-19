@@ -14,9 +14,9 @@ Track Harness Agent tasks from iPhone and iPad, keep working offline, and receiv
 
 ## Description
 
-Harness Mobile is the companion app for the AI Harness Platform. It lets operators review Agent tasks, create follow-up tasks, mark work complete, and keep local changes available when the network is unreliable.
+Forge Harness Mobile is the companion app for Forge Harness. It lets operators review Agent tasks, create follow-up tasks, mark work complete, and keep local changes available when the network is unreliable.
 
-The app syncs with the Harness backend using the same offline-first task synchronization mechanism as Harness Desktop. Local edits are queued on device and uploaded when connectivity returns. Push notifications can alert users about run completion, approval needs, and sync conflicts.
+The app syncs with the Forge Harness backend using the same offline-first task synchronization mechanism as Forge Harness Desktop. Local edits are queued on device and uploaded when connectivity returns. Push notifications can alert users about run completion, approval needs, and sync conflicts.
 
 ## Keywords
 

@@ -88,7 +88,7 @@ describe('packaged renderer protocol', () => {
 
       expect(response.status).toBe(200)
       expect(response.headers.get('content-security-policy')).toContain("default-src 'none'")
-      expect(await response.text()).toContain('Harness Desktop could not load')
+      expect(await response.text()).toContain('Forge Harness Desktop could not load')
     } finally {
       Object.defineProperty(process, 'resourcesPath', { configurable: true, value: originalResourcesPath })
       fs.rmSync(root, { recursive: true, force: true })

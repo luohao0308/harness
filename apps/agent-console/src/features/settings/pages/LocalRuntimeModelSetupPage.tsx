@@ -32,7 +32,7 @@ export function LocalRuntimeModelSetupPage() {
   const save = useMutation({
     mutationFn: async () => {
       if (!desktopApi?.setModelApiKey) {
-        throw new Error("Model API keys can only be saved from Harness Desktop.");
+        throw new Error("Model API keys can only be saved from Forge Harness Desktop.");
       }
       const status = await desktopApi.setModelApiKey(apiKey.trim());
       await modelStatus.refetch();
@@ -88,7 +88,7 @@ export function LocalRuntimeModelSetupPage() {
           <div className="mt-5 rounded-md border border-slate-200 bg-slate-50 p-3">
             <div className="flex gap-2 text-sm font-medium text-slate-800">
               <ExternalLink className="mt-0.5 h-4 w-4 shrink-0" />
-              Open Harness Desktop to add or replace the API key.
+              Open Forge Harness Desktop to add or replace the API key.
             </div>
             <p className="mt-1.5 text-xs leading-5 text-slate-600">
               The Web Extension can inspect model status, but it never receives or writes model secrets.

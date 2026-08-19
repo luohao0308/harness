@@ -77,6 +77,14 @@ describe('desktop phase 6 services', () => {
       id: 'customer-a',
       hasCredential: true,
     })
+    const { getActiveProfileWorkspaceRoot, setActiveProfileWorkspaceRoot } = await import(
+      '../services/phase6-store'
+    )
+    setActiveProfileWorkspaceRoot('/trusted/customer-a-workspace')
+    expect(getActiveProfileWorkspaceRoot()).toBe('/trusted/customer-a-workspace')
+    expect(list?.({}).profiles.find((item: { id: string }) => item.id === 'customer-a')).not.toHaveProperty(
+      'workspaceRoot'
+    )
     expect(mockWindows[0].webContents.send).toHaveBeenCalledWith(
       'profile:changed',
       expect.objectContaining({ id: 'customer-a', hasCredential: true })
@@ -87,6 +95,7 @@ describe('desktop phase 6 services', () => {
     const persisted = fs.readFileSync(stateFile, 'utf-8')
     expect(persisted).toContain('"schemaVersion": 2')
     expect(persisted).toContain('"kind": "safeStorage"')
+    expect(persisted).toContain('"workspaceRoot": "/trusted/customer-a-workspace"')
     expect(persisted).not.toContain('"authToken"')
     expect(persisted).not.toContain('token-a')
     expect(mockSafeStorage.encryptString).toHaveBeenCalledWith('token-a')

@@ -67,6 +67,7 @@ def test_local_core_routes_and_job_workers_import_without_server_queue_packages(
             "app.workers.team_runtime_worker",
             "app.workers.alert_evaluator",
             "app.workers.subagent_recovery_worker",
+            "app.workers.trigger_invocation_worker",
         ):
             importlib.import_module(module_name)
 
@@ -76,7 +77,9 @@ def test_local_core_routes_and_job_workers_import_without_server_queue_packages(
             "subagent",
             "team_runtime_tick",
             "alert_evaluation",
-            "subagent_recovery",
+                "subagent_recovery",
+                "trigger_source_poll",
+                "trigger_invocation",
         }
         assert not any(
             name.split(".", 1)[0] in {"dramatiq", "redis"}
@@ -96,6 +99,7 @@ def test_server_worker_modules_still_register_dramatiq_actors() -> None:
         from app.workers.alert_evaluator import evaluate_alerts_actor
         from app.workers.subagent_recovery_worker import recover_stalled_subagents_actor
         from app.workers.subagent_worker import run_subagent
+        from app.workers.trigger_invocation_worker import run_trigger_invocation
 
         actors = (
             (run_agent_assignment, "run_agent_assignment", "agent_assignments"),
@@ -110,6 +114,11 @@ def test_server_worker_modules_still_register_dramatiq_actors() -> None:
             assert actor.queue_name == queue_name
             assert actor.options["max_retries"] == 0
         assert run_subagent.options["time_limit"] == 900_000
+        assert hasattr(run_trigger_invocation, "fn")
+        assert hasattr(run_trigger_invocation, "send")
+        assert run_trigger_invocation.actor_name == "run_trigger_invocation"
+        assert run_trigger_invocation.queue_name == "triggers"
+        assert run_trigger_invocation.options["max_retries"] == 10_000
         """,
         runtime_profile="server",
     )

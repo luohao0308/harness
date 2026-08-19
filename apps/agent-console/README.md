@@ -1,8 +1,8 @@
-# Agent Console / Agent 控制台
+# Forge Harness Console / 控制台
 
-面向企业级 AI Agent Harness 的前端控制台。负责 `/agents/:agentId/workspace`、Inspector、历史对话面板、Run Detail 等 Workspace Pro 的全部 UI。
+Forge Harness 的企业级 AI 控制台。负责 `/agents/:agentId/workspace`、Inspector、历史对话面板、Run Detail 等 Workspace Pro 的全部 UI。
 
-Front-end console for the enterprise AI Agent Harness. Hosts the workspace, inspector, history panel, run detail and the rest of the Workspace Pro UI.
+Front-end console for Forge Harness. It hosts the workspace, inspector, history panel, run detail, and the rest of the Workspace Pro UI.
 
 ## Stack
 

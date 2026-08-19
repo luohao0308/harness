@@ -1,6 +1,6 @@
 # Task Board
 
-_last-updated: 2026-08-16_
+_last-updated: 2026-08-20_
 
 > **唯一用途**：记录当前进行中、明确待办、阻塞和技术债。稳定事实写入架构/设计文档，详细验证过程写入工作日志（如项目启用）。
 >
@@ -13,14 +13,18 @@ _last-updated: 2026-08-16_
 
 ## 进行中 (In Progress)
 
-| ID | 任务 | 范围/仓库 | 上下文 | 阻塞 |
+暂无。
+
+## 已暂停/阻塞 (Blocked)
+
+| ID | 任务 | 范围/仓库 | 上下文 | 阻塞与恢复条件 |
 |---|---|---|---|---|
-| REL-001 | [~] 在正式 Release CI 获得 macOS/Windows/Linux 真实打包 Desktop 启动五样本 P95 证据 | Desktop packaging、release workflow | [启动性能记录](../omx_wiki/session-2026-07-31-desktop-startup-performance-budget.md) | 本地 native ABI/审批服务不能替代正式 Release CI 证据 |
+| REL-001 | [~] 在正式 Release CI 获得 macOS/Windows/Linux 真实打包 Desktop 启动五样本 P95 证据 | Desktop packaging、release workflow | [启动 P95 优化记录](../omx_wiki/session-2026-08-17-desktop-startup-p95-optimization.md) | 当前没有可用的正式 macOS/Windows/Linux Release runner；任一受控三平台环境具备后恢复，仍需各五样本通过报告与聚合证据 |
 
 ## 待办 (Todo)
 
-- [ ] APP-001：修复 `/settings/data` 路由、loader 与 API 契约；当前截图审计记录为 404。证据见 [Desktop 功能截图审计](../omx_wiki/session-2026-08-07-desktop-functional-screenshot-audit.md)。
-- [ ] APP-002：修复 `/subagents/specialists` 路由解析或 ID/权限处理；当前审计记录为终态加载失败。证据见 [Desktop 功能截图审计](../omx_wiki/session-2026-08-07-desktop-functional-screenshot-audit.md)。
+> Desktop 下一阶段按 [已批准路线](plans/desktop-next-capabilities-roadmap-2026-08-17.md) 串行推进；`REL-001` 因外部环境阻塞而暂停，`DESK-002` 至 `DESK-006` 已按批准顺序完成。
+
 - [ ] OPS-001：环境具备时运行 Tempo + Loki 全基础设施验证配置，并记录 trace/log 关联证据；该项不是常规 release-gate hygiene 的前置条件。历史边界见 [归档进度说明](工作日志/archive/task-progress-human.md)。
 
 ## 未授权或未立项 (Do Not Start)
@@ -38,12 +42,23 @@ _last-updated: 2026-08-16_
 - [x] DW-003：将统一文档与 Markdown 链接门禁接入 Docs CI，并由 `validate-docs.py` 锁定 CI 调用契约；证据见 [接入记录](WORKFLOW-ADOPTION.md)。
 - [x] GIT-001：以严格保留历史作者/提交者时间和文件树的方式重排线上功能分支，并建立轻量单维护者 OPC 提交流程；PR #34 已在 14 项检查通过后合并，原功能分支通过精确租约更新到已验证历史，独立归档仍保留原始 tip，证据见 [Git 历史与 OPC 交付记录](../omx_wiki/session-2026-08-16-git-history-opc-delivery.md)。
 - [x] WF-001：建立大型计划自动拆分与用户确认门；AI 在实现前列出 `2-6` 个可验证切片并等待一次确认，确认后单切片连续执行，范围或风险实质变化时重新确认，证据见 [大型计划拆分门记录](../omx_wiki/session-2026-08-16-large-plan-decomposition-gate.md)。
+- [x] APP-001：`/settings/data` 兼容入口已重定向到 `/settings/data-management`，保留 query/hash 并通过路由契约、Chromium 企业冒烟验证。
+- [x] APP-002：`/subagents/specialists` 及详情入口已重定向到专家库权威路径，静态路由优先于动态子代理 ID，Chromium 企业冒烟 `44/44` 通过。
+- [x] DESK-001：Desktop 类型检查已拆分为主进程、浏览器适配器和测试环境，`npm run type-check`、`build:main` 与全量 Desktop 测试通过。
+- [x] DESK-002：统一待处理中心已聚合组织范围审批、异常 Run、Team 阻塞与 Desktop 本地同步/Runtime 恢复项，支持权限受控的直接处理、筛选、浏览器降级和窄屏布局；证据见 [功能矩阵](FEATURE-MATRIX.md) 与 [已批准路线](plans/desktop-next-capabilities-roadmap-2026-08-17.md)。
+- [x] DESK-003：原生变更审查工作区已提供根目录受控的 Git 状态、分块 Diff、安全 stage/unstage/revert、未跟踪整文件暂存、显式确认和 Run/Approval 审计；证据见 [功能矩阵](FEATURE-MATRIX.md)、[Wiki 记录](../omx_wiki/session-2026-08-17-desktop-change-review.md) 与 [已批准路线](plans/desktop-next-capabilities-roadmap-2026-08-17.md)。
+- [x] DESK-004：Trigger 与后台自动化已覆盖定时、文件、Git、Webhook、幂等 invocation、租约/重试、kill switch、Run/Event 追溯和 Desktop 管理；证据见 [功能矩阵](FEATURE-MATRIX.md)、[Wiki 记录](../omx_wiki/session-2026-08-18-desktop-trigger-automation.md) 与 [已批准路线](plans/desktop-next-capabilities-roadmap-2026-08-17.md)。
+- [x] DESK-005：Desktop 项目知识自动索引已支持 Profile 隔离目录、确定性 ignore、安全预算扫描、幂等增量版本、完整快照 tombstone、暂停/恢复/解绑和 `project://` 真实引用；证据见 [功能矩阵](FEATURE-MATRIX.md)、[Wiki 记录](../omx_wiki/session-2026-08-18-desktop-project-knowledge-discovery.md) 与 [已批准路线](plans/desktop-next-capabilities-roadmap-2026-08-17.md)。
+- [x] DESK-006：完整离线 Agent 已支持 Profile 级 SQLite Run/Event/模型/工具/审批证据、确定性本地降级、受限工作区工具、强制写入审批、取消/恢复、崩溃与 Profile 切换恢复，以及终态快照重连后的幂等证据导入；证据见 [功能矩阵](FEATURE-MATRIX.md)、[Wiki 记录](../omx_wiki/session-2026-08-19-desktop-offline-agent.md) 与 [已批准路线](plans/desktop-next-capabilities-roadmap-2026-08-17.md)。
+- [x] FCAT-001：建立 8 个领域、14 个能力、41 个具体功能的机器可读目录，生成成熟度矩阵，接入 AI brief 精准匹配和 Docs CI 漂移门禁；证据见 [实施计划](plans/feature-catalog-pilot-2026-08-17.md) 与 [功能矩阵](FEATURE-MATRIX.md)。
+- [x] FCAT-002：将试点提炼为 dev-workflow `0.3.0` 的可选 `feature-catalog` 流程包，保留 Harness 项目数据与定制工具；证据见 [提取记录](../omx_wiki/session-2026-08-17-feature-catalog-dev-workflow-extraction.md)。
+- [x] HARD-001：修复 Desktop、Trigger、Project Knowledge、离线同步、离线 Agent 与 Change Review 的归属、顺序、审批写入和异步恢复完整性；S1-S5 本地验证闭环完成，证据见 [实施计划](plans/desktop-trigger-integrity-hardening-2026-08-19.md) 与 [Wiki 记录](../omx_wiki/session-2026-08-20-desktop-trigger-integrity-hardening.md)。正式签名三平台包仍由暂停中的 `REL-001` 跟踪。
 
 ## 技术债 (Technical Debt)
 
 | 项目 | 风险 | 说明 |
 |---|---|---|
-| DESK-001 | 中 | `cd apps/desktop-app && npm run type-check` 当前会把主进程、浏览器和 Vitest 测试放在同一 TypeScript 环境中检查，暴露 DOM lib 缺失和测试 mock/fixture 类型债；生产 `build:main` 与 `38` 个测试文件、`324` 个测试均通过。需要拆分或校正 Desktop 类型检查配置。证据见 [dev-workflow 接入记录](../omx_wiki/session-2026-08-10-dev-workflow-install-and-docs.md)。 |
+| REL-001 | 高 | 优化包首轮冷缓存五样本 P95 为总计 `6297ms`、renderer 阶段 `4358ms`，仍超 `6000/3500ms`；同一包第二轮 P95 为 `4286/3145ms` 并通过。正式 macOS/Windows/Linux runner 仍需生成最终证据。 |
 
 ---
 

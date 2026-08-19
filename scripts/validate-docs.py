@@ -19,6 +19,26 @@ BRIEF_ROUTE_FIXTURES = {
     ],
     "frontend UI selector": ["frontend-ui-console"],
     "context router memory budget": ["context-router-memory"],
+    "feature catalog status": ["feature-catalog"],
+    "功能清单": ["feature-catalog"],
+}
+BRIEF_FEATURE_FIXTURES = {
+    "RAG retrieval and Run Detail grounding": {
+        "required": ["rag-grounding-citations", "run-detail"],
+        "forbidden": ["release-startup-evidence"],
+    },
+    "Groundedness Eval regression": {
+        "required": ["groundedness-eval"],
+        "forbidden": ["release-startup-evidence"],
+    },
+    "Desktop startup P95 release evidence": {
+        "required": ["release-startup-evidence"],
+        "forbidden": ["rag-grounding-citations"],
+    },
+    "Team task graph dependency": {
+        "required": ["task-graph"],
+        "forbidden": ["rag-grounding-citations"],
+    },
 }
 
 BLOCKED_TERMS = [
@@ -97,6 +117,8 @@ REQUIRED_FILES = [
     "docs/development/ai/00-execution-protocol.md",
     "docs/development/ai/agent-startup-context.md",
     "docs/development/ai/context-index.json",
+    "docs/development/ai/feature-catalog.schema.json",
+    "docs/development/ai/feature-catalog.json",
     "docs/development/ai/01-task-progress.md",
     "docs/development/ai/task-progress.yaml",
     "docs/plans/README.md",
@@ -108,7 +130,10 @@ REQUIRED_FILES = [
     *TOP_LEVEL_SPECS,
     *STAGE_FILES,
     "scripts/agent-context-brief.py",
+    "scripts/feature_catalog.py",
+    "scripts/test_feature_catalog.py",
     "docs/architecture/module-map.json",
+    "docs/FEATURE-MATRIX.md",
 ]
 
 STAGE_SECTIONS = [
@@ -150,6 +175,36 @@ def check_docs_ci_contract() -> None:
     for marker in required_markers:
         if marker not in workflow:
             fail(f"docs CI missing required command: {marker}")
+
+
+def check_feature_catalog_contract() -> None:
+    script = ROOT / "scripts/feature_catalog.py"
+    schema = ROOT / "docs/development/ai/feature-catalog.schema.json"
+    matrix = ROOT / "docs/FEATURE-MATRIX.md"
+    schema_text = read_text(schema)
+    for marker in ["Harness Feature Catalog", '"schema_version"', '"$defs"']:
+        if marker not in schema_text:
+            fail(f"feature catalog schema missing marker: {marker}")
+    matrix_text = read_text(matrix)
+    for marker in [
+        "AUTO-GENERATED from docs/development/ai/feature-catalog.json",
+        "python3 scripts/feature_catalog.py --generate",
+        "# Harness 功能矩阵",
+    ]:
+        if marker not in matrix_text:
+            fail(f"feature matrix missing marker: {marker}")
+    for command in (
+        [sys.executable, str(script), "--validate"],
+        [sys.executable, str(script), "--check"],
+        [sys.executable, "-m", "unittest", "scripts.test_feature_catalog"],
+    ):
+        completed = subprocess.run(command, cwd=ROOT, check=False, capture_output=True, text=True)
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()
+            fail(f"feature catalog command failed ({' '.join(command)}): {detail}")
+    check_docs_script = read_text(ROOT / "scripts/check-docs.sh")
+    if "python3 -m unittest scripts.test_feature_catalog" not in check_docs_script:
+        fail("scripts/check-docs.sh missing feature catalog regression command")
 
 
 def check_large_plan_gate_contract() -> None:
@@ -320,6 +375,7 @@ def check_agent_context_contract() -> None:
 
     required_route_ids = {
         "agent-startup-context-loop",
+        "feature-catalog",
         "large-plan-decomposition",
         "project-handoff",
         "knowledge-rag-grounding",
@@ -393,6 +449,22 @@ def check_agent_context_brief_fixtures() -> None:
                 "agent context brief route mismatch for "
                 f"{task!r}: expected {expected_routes}, got {route_ids}"
             )
+    for task, expectations in BRIEF_FEATURE_FIXTURES.items():
+        completed = subprocess.run(
+            [sys.executable, str(script), "--task", task, "--max-features", "6"],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            fail(f"feature catalog brief failed for task {task!r}: {completed.stderr.strip()}")
+        for feature_id in expectations["required"]:
+            if f"`{feature_id}`" not in completed.stdout:
+                fail(f"feature catalog brief missing {feature_id} for task {task!r}")
+        for feature_id in expectations["forbidden"]:
+            if f"`{feature_id}`" in completed.stdout:
+                fail(f"feature catalog brief returned unrelated {feature_id} for task {task!r}")
 
 
 def check_module_map() -> None:
@@ -439,6 +511,7 @@ def check_readme_links() -> None:
 def main() -> None:
     check_required_files()
     check_docs_ci_contract()
+    check_feature_catalog_contract()
     check_large_plan_gate_contract()
     check_no_old_stage_docs()
     check_no_legacy_doc_dirs()

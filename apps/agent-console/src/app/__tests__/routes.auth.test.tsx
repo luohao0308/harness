@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const authState = vi.hoisted(() => ({
@@ -15,7 +15,13 @@ vi.mock("../../features/auth/AuthProvider", () => ({
   useAuth: () => authState.value,
 }));
 
-import { LegacyModelSetupRedirect, RequireAuth } from "../routes";
+import {
+  LegacyModelSetupRedirect,
+  LegacyPathRedirect,
+  LegacySpecialistDetailRedirect,
+  RequireAuth,
+  router,
+} from "../routes";
 
 function renderProtected(path = "/settings/secrets") {
   return render(
@@ -46,6 +52,11 @@ afterEach(() => {
 });
 
 describe("RequireAuth", () => {
+  it("registers the desktop change review route", () => {
+    const rootRoute = router.routes.find((route) => route.path === "/");
+    expect(rootRoute?.children?.some((route) => route.path === "changes")).toBe(true);
+  });
+
   it("redirects unauthenticated console routes to login", () => {
     renderProtected("/settings/secrets");
 
@@ -132,4 +143,35 @@ describe("LegacyModelSetupRedirect", () => {
     );
     expect(screen.getByText("桌面模型设置")).toBeInTheDocument();
   });
+
+  it("normalizes old data-management links and preserves location state", () => {
+    render(
+      <MemoryRouter initialEntries={["/settings/data?scope=org#retention"]}>
+        <Routes>
+          <Route path="/settings/data" element={<LegacyPathRedirect to="/settings/data-management" />} />
+          <Route path="/settings/data-management" element={<RouteLocation />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("/settings/data-management?scope=org#retention")).toBeInTheDocument();
+  });
+
+  it("normalizes old specialist detail links without treating specialists as a subagent ID", () => {
+    render(
+      <MemoryRouter initialEntries={["/subagents/specialists/spec reviewer?window=30d#history"]}>
+        <Routes>
+          <Route path="/subagents/specialists/:specialistId" element={<LegacySpecialistDetailRedirect />} />
+          <Route path="/subagent-specialists/:specialistId" element={<RouteLocation />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("/subagent-specialists/spec%20reviewer?window=30d#history")).toBeInTheDocument();
+  });
 });
+
+function RouteLocation() {
+  const location = useLocation();
+  return <div>{`${location.pathname}${location.search}${location.hash}`}</div>;
+}

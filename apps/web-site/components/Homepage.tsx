@@ -33,13 +33,13 @@ export function Homepage({ onNav }: { onNav?: (k: string) => void }) {
                 v1.4 · 当前已实现的能力均可运行、可验证、可部署
               </div>
               <h1 className="text-[36px] sm:text-[44px] leading-[1.1] tracking-tight text-slate-900 mb-4">
-                生产级企业 AI Agent
+                Forge Harness
                 <br />
-                Harness 平台
+                企业级 AI 控制面
               </h1>
               <p className="text-slate-600 text-[15px] leading-[1.6] max-w-xl mb-7">
-                将大模型能力工程化为具备 任务生命周期、事件溯源、Replay、Subagent 编排、Docker
-                Sandbox 与审计的执行系统。Model 提供推理，Harness 提供可靠性。
+                将模型、知识、工具、策略和评测组合成可运行、可观测、可恢复的企业 AI 执行系统。
+                Model 提供推理，Harness 提供可靠性。
               </p>
               <div className="flex flex-wrap items-center gap-3">
                 <Link href={siteLinks.console} className="bg-slate-900 text-white text-[13px] px-4 py-2.5 rounded hover:bg-slate-800 inline-flex items-center gap-2">

@@ -74,7 +74,7 @@ async function resolvePackagedExecutable() {
     }
   }
   throw new Error(
-    `Packaged Harness Desktop executable not found. Run "npm run package" first. Checked: ${candidates.join(', ')}`,
+    `Packaged Forge Harness Desktop executable not found. Run "npm run package" first. Checked: ${candidates.join(', ')}`,
   )
 }
 

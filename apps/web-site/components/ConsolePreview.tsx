@@ -95,7 +95,7 @@ export function ConsolePreview() {
           </div>
           <div className="rounded border border-slate-200 p-2 mb-2">
             <div className="text-slate-700 text-[11px]">sbx_a91f</div>
-            <div className="text-slate-400 text-[10px]">harness/python:3.11</div>
+          <div className="text-slate-400 text-[10px]">forge-harness/python:3.11</div>
             <div className="flex justify-between mt-1.5 text-[10px]">
               <span className="text-slate-500">cpu</span>
               <span className="text-slate-700">42%</span>

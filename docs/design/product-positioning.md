@@ -2,7 +2,7 @@
 
 ## 一句话定位
 
-生产级企业 AI Agent Harness 平台，将大模型能力工程化为具备审计、恢复、隔离、并发编排和私有化部署能力的企业任务执行系统。
+Forge Harness 是生产级企业 AI 控制面，将大模型能力工程化为具备审计、恢复、隔离、并发编排和私有化部署能力的企业任务执行系统。
 
 ## 核心公式
 
@@ -87,13 +87,13 @@ User Goal
 主标题：
 
 ```text
-生产级企业 AI Agent Harness 平台
+Forge Harness：生产级企业 AI 控制面
 ```
 
 副标题：
 
 ```text
-通过 Planner、Executor、Subagent、Event Sourcing、Docker Sandbox 和 WarmPool，将大模型转化为企业级任务执行系统。
+通过 Planner、Executor、Subagent、Event Sourcing、Docker Sandbox 和 WarmPool，将模型转化为企业级任务执行系统。
 ```
 
 核心能力：

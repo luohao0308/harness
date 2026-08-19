@@ -8,6 +8,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+import feature_catalog
+
 ROOT = Path(__file__).resolve().parents[1]
 STARTUP_CONTEXT = ROOT / "docs/development/ai/agent-startup-context.md"
 CONTEXT_INDEX = ROOT / "docs/development/ai/context-index.json"
@@ -185,7 +187,42 @@ def render_recent_sessions() -> str:
     return "\n".join(["", "## Recent Sessions", ""] + pointer_lines)
 
 
-def render_brief(task: str, max_pages: int, max_routes: int, show_startup: bool, show_sessions: bool = False) -> str:
+def _compact_paths(paths: list[str], limit: int = 3) -> str:
+    if not paths:
+        return "—"
+    values = [f"`{path}`" for path in paths[:limit]]
+    if len(paths) > limit:
+        values.append("...")
+    return ", ".join(values)
+
+
+def render_feature_matches(task: str, max_features: int) -> list[str]:
+    if not task.strip():
+        return []
+    matches = feature_catalog.query_catalog(task, max_features)
+    if not matches:
+        return []
+    lines = ["", "## Matched Feature Capabilities", ""]
+    for item in matches:
+        lines.append(
+            f"  - `{item['id']}` [{item['level']}] {item['name']} — "
+            f"implementation=`{item['implementation_status']}`, maturity=`{item['maturity']}`, "
+            f"code={_compact_paths(item['code_paths'])}, specs={_compact_paths(item['spec_paths'])}, "
+            f"tests={_compact_paths(item['test_paths'])}"
+        )
+        if item["known_gaps"]:
+            lines.append(f"    gaps: {'; '.join(item['known_gaps'])}")
+    return lines
+
+
+def render_brief(
+    task: str,
+    max_pages: int,
+    max_routes: int,
+    show_startup: bool,
+    show_sessions: bool = False,
+    max_features: int = 6,
+) -> str:
     index = load_index()
     routes = select_routes(index, task, max_routes)
     base_read_order = ["docs/development/ai/agent-startup-context.md", "docs/development/ai/task-progress.yaml"]
@@ -218,6 +255,8 @@ def render_brief(task: str, max_pages: int, max_routes: int, show_startup: bool,
     ]
     for route in routes:
         lines.append(f"- `{route.get('id')}`: {route.get('summary')}")
+
+    lines.extend(render_feature_matches(task, max_features))
 
     lines.extend(
         [
@@ -270,6 +309,12 @@ def main() -> None:
         help="Maximum matched context routes to include.",
     )
     parser.add_argument(
+        "--max-features",
+        type=int,
+        default=6,
+        help="Maximum matched feature entries, including required ancestors.",
+    )
+    parser.add_argument(
         "--show-startup",
         action="store_true",
         help="Append the startup context excerpt to the brief.",
@@ -292,7 +337,18 @@ def main() -> None:
 
     max_pages = max(1, args.max_pages)
     max_routes = max(1, args.max_routes)
-    print(render_brief(args.task, max_pages, max_routes, args.show_startup, args.show_sessions), end="")
+    max_features = max(1, args.max_features)
+    print(
+        render_brief(
+            args.task,
+            max_pages,
+            max_routes,
+            args.show_startup,
+            args.show_sessions,
+            max_features,
+        ),
+        end="",
+    )
 
 
 if __name__ == "__main__":

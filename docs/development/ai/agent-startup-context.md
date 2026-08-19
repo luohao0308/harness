@@ -5,10 +5,12 @@ Low-token entry point. Read this, then run the brief for your task.
 ## Project Identity
 
 ```text
+Forge Harness
+
 Model + Harness = Agent
 ```
 
-AI Harness Platform — production agent infrastructure: model config, tools, MCP,
+Forge Harness — private enterprise AI infrastructure: model config, tools, MCP,
 sandbox policy, planning, execution, event sourcing, eval, observability, warmpool,
 knowledge grounding, context routing. Not a generic chatbot.
 
@@ -35,6 +37,7 @@ Machine progress source: `docs/development/ai/task-progress.yaml`
 | --- | --- |
 | Module → docs map | `docs/architecture/MODULE-INDEX.md` |
 | Feature → spec map | `docs/contracts/SPEC-INDEX.md` |
+| Feature → implementation/maturity/evidence map | `docs/development/ai/feature-catalog.json` and generated `docs/FEATURE-MATRIX.md` |
 | Known errors & fixes | `docs/development/ai/error-registry.md` |
 | Design anti-patterns | `docs/development/ai/anti-patterns.md` |
 | Current handoff state | `omx_wiki/project-handoff-current-state.md` |

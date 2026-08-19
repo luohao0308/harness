@@ -2,7 +2,7 @@
 
 ## Role
 
-The executing AI works as an implementation agent for a Production Agent Harness Platform.
+The executing AI works as an implementation agent for the Forge Harness production AI control plane.
 
 ## Source Of Truth
 

@@ -19,6 +19,7 @@ export class SQLiteOfflineQueue implements OfflineQueue {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sync_operations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operation_id TEXT,
         operation_type TEXT NOT NULL CHECK(operation_type IN ('CREATE', 'UPDATE', 'DELETE')),
         entity_type TEXT NOT NULL,
         entity_id TEXT NOT NULL,
@@ -35,6 +36,15 @@ export class SQLiteOfflineQueue implements OfflineQueue {
       CREATE INDEX IF NOT EXISTS idx_sync_operations_entity ON sync_operations(entity_type, entity_id);
       CREATE INDEX IF NOT EXISTS idx_sync_operations_created_at ON sync_operations(created_at);
     `)
+    const columns = this.db.prepare(`PRAGMA table_info(sync_operations)`).all() as Array<{ name: string }>
+    if (!columns.some(column => column.name === 'operation_id')) {
+      this.db.exec(`ALTER TABLE sync_operations ADD COLUMN operation_id TEXT`)
+    }
+    this.db.prepare(`
+      UPDATE sync_operations
+      SET status = 'PENDING'
+      WHERE status = 'IN_PROGRESS'
+    `).run()
   }
 
   enqueue(
@@ -42,12 +52,13 @@ export class SQLiteOfflineQueue implements OfflineQueue {
   ): SyncOperation {
     const stmt = this.db.prepare(`
       INSERT INTO sync_operations (
-        operation_type, entity_type, entity_id, payload_json, client_timestamp,
+        operation_id, operation_type, entity_type, entity_id, payload_json, client_timestamp,
         retry_count, last_retry_at, status, error_message, created_at
-      ) VALUES (?, ?, ?, ?, ?, 0, NULL, 'PENDING', NULL, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, 'PENDING', NULL, ?)
     `)
 
     const result = stmt.run(
+      operation.operation_id ?? null,
       operation.operation_type,
       operation.entity_type,
       operation.entity_id,
@@ -156,8 +167,9 @@ export class SQLiteOfflineQueue implements OfflineQueue {
   private mapRowToOperation(row: RawSyncOperationRow): SyncOperation {
     return {
       id: row.id,
+      operation_id: row.operation_id ?? undefined,
       operation_type: row.operation_type as 'CREATE' | 'UPDATE' | 'DELETE',
-      entity_type: row.entity_type as 'task',
+      entity_type: row.entity_type as 'task' | 'offline_agent_run',
       entity_id: row.entity_id,
       payload_json: row.payload_json,
       client_timestamp: row.client_timestamp,
@@ -171,6 +183,7 @@ export class SQLiteOfflineQueue implements OfflineQueue {
 
 interface RawSyncOperationRow {
   id: number
+  operation_id: string | null
   operation_type: string
   entity_type: string
   entity_id: string

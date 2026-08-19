@@ -38,7 +38,7 @@ export interface TaskStore {
   /**
    * Query tasks with filters
    */
-  query(options: TaskQueryOptions): TaskWithSyncMetadata[]
+  query(options?: TaskQueryOptions): TaskWithSyncMetadata[]
 
   /**
    * Get all tasks pending sync

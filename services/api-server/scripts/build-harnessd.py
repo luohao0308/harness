@@ -7,16 +7,18 @@ import platform
 import shutil
 import sys
 from importlib import metadata
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from PyInstaller.__main__ import run as run_pyinstaller
 from PyInstaller.archive.readers import CArchiveReader
 
 from app.cli.harnessd import LOCAL_RUNTIME_ROUTER_MODULES
+from app.db.sqlite_candidate_migration import create_fresh_sqlite_candidate
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 ENTRYPOINT = SERVICE_ROOT / "app" / "cli" / "harnessd.py"
 MODEL_PRICING_SOURCES = SERVICE_ROOT / "app" / "settings" / "model_pricing_sources.json"
+SOURCE_METADATA = SERVICE_ROOT / "agent_harness_api_server.egg-info"
 LOCAL_RUNTIME_HIDDEN_IMPORTS = (
     "app.agents.subagent_timing",
     "app.runtime_jobs.handlers",
@@ -41,6 +43,7 @@ EXCLUDED_MODULES = (
     "redis",
 )
 FORBIDDEN_ARCHIVE_PREFIXES = ("asyncpg", "dramatiq", "psycopg", "psycopg2", "redis")
+SQLITE_TEMPLATE_BUILD_PATH = SERVICE_ROOT / "build" / "harnessd-template" / "harness.sqlite3"
 
 
 def _node_platform() -> str:
@@ -81,7 +84,12 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _pyinstaller_options(dist_dir: Path, work_dir: Path, spec_dir: Path) -> list[str]:
+def _pyinstaller_options(
+    dist_dir: Path,
+    work_dir: Path,
+    spec_dir: Path,
+    sqlite_template: Path = SQLITE_TEMPLATE_BUILD_PATH,
+) -> list[str]:
     data_separator = ":" if sys.platform != "win32" else ";"
     options = [
         str(ENTRYPOINT),
@@ -96,7 +104,7 @@ def _pyinstaller_options(dist_dir: Path, work_dir: Path, spec_dir: Path) -> list
         f"--add-data={SERVICE_ROOT / 'alembic'}{data_separator}alembic",
         f"--add-data={SERVICE_ROOT / 'alembic.ini'}{data_separator}.",
         f"--add-data={MODEL_PRICING_SOURCES}{data_separator}app/settings",
-        "--copy-metadata=agent-harness-api-server",
+        f"--add-data={sqlite_template}{data_separator}runtime-template",
     ]
     options.extend(
         f"--hidden-import={module_name}"
@@ -106,7 +114,20 @@ def _pyinstaller_options(dist_dir: Path, work_dir: Path, spec_dir: Path) -> list
         f"--hidden-import={module_name}" for module_name in LOCAL_RUNTIME_HIDDEN_IMPORTS
     )
     options.extend(f"--exclude-module={module_name}" for module_name in EXCLUDED_MODULES)
+    if SOURCE_METADATA.is_dir():
+        options.append(f"--add-data={SOURCE_METADATA}{data_separator}{SOURCE_METADATA.name}")
+    else:
+        options.append("--copy-metadata=agent-harness-api-server")
     return options
+
+
+def _prepare_sqlite_template() -> tuple[Path, str]:
+    template = SQLITE_TEMPLATE_BUILD_PATH
+    template.parent.mkdir(parents=True, exist_ok=True)
+    for suffix in ("", "-wal", "-shm"):
+        (Path(f"{template}{suffix}")).unlink(missing_ok=True)
+    revision = create_fresh_sqlite_candidate(template, alembic_ini=SERVICE_ROOT / "alembic.ini")
+    return template, revision
 
 
 def _archive_members(executable: Path) -> set[str]:
@@ -157,6 +178,7 @@ def _bundle_hashes(bundle_root: Path) -> dict[str, str]:
 
 def main() -> int:
     args = _parse_args()
+    sqlite_template, template_revision = _prepare_sqlite_template()
     dist_dir = args.dist_dir.resolve() / "runtime" / _node_platform() / _node_architecture()
     work_dir = SERVICE_ROOT / "build" / "harnessd"
     spec_dir = SERVICE_ROOT / "build"
@@ -169,12 +191,23 @@ def main() -> int:
     bundle_dir = dist_dir / "harnessd"
     executable = bundle_dir / executable_name
 
-    run_pyinstaller(_pyinstaller_options(dist_dir, work_dir, spec_dir))
+    run_pyinstaller(_pyinstaller_options(dist_dir, work_dir, spec_dir, sqlite_template))
 
     if not executable.is_file():
         raise FileNotFoundError(f"PyInstaller did not create {executable}")
     _audit_archive(executable)
     files = _bundle_hashes(bundle_dir)
+    template_matches = [
+        relative_path
+        for relative_path in files
+        if PurePosixPath(relative_path).parts[-2:] == (
+            "runtime-template",
+            "harness.sqlite3",
+        )
+    ]
+    if len(template_matches) != 1:
+        raise RuntimeError(f"expected one packaged SQLite template, found {template_matches!r}")
+    template_relative_path = f"harnessd/{template_matches[0]}"
     executable_relative = executable.relative_to(dist_dir).as_posix()
     manifest = {
         "schema_version": 2,
@@ -183,6 +216,11 @@ def main() -> int:
         "architecture": _node_architecture(),
         "executable": executable_relative,
         "sha256": _sha256(executable),
+        "sqlite_template": {
+            "path": template_relative_path,
+            "revision": template_revision,
+            "sha256": files[template_matches[0]],
+        },
         "files": {
             f"harnessd/{relative_path}": digest for relative_path, digest in files.items()
         },

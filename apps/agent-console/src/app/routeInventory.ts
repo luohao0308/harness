@@ -17,6 +17,7 @@ export const staticConsoleRoutePaths = [
   "/runs",
   "/tasks",
   "/subagents",
+  "/subagents/specialists",
   "/subagent-specialists",
   "/subagent-marketplace",
   "/sandboxes",
@@ -38,6 +39,7 @@ export const staticConsoleRoutePaths = [
   "/settings/users",
   "/settings/api-keys",
   "/settings/audit",
+  "/settings/data",
   "/settings/data-management",
   "/settings/frontend-errors",
 ] as const;
@@ -77,6 +79,11 @@ export const dynamicConsoleRouteSamples = [
     name: "Subagent Detail",
     pattern: "/subagents/:subagentId",
     sample: "/subagents/subagent-enterprise",
+  },
+  {
+    name: "Legacy Specialist Detail Redirect",
+    pattern: "/subagents/specialists/:specialistId",
+    sample: "/subagents/specialists/specialist-enterprise",
   },
   {
     name: "Specialist Detail",

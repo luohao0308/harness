@@ -1,10 +1,10 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-08-16T01:47:50+08:00
+last_updated_at: 2026-08-20T00:25:32+08:00
 last_updated_by: codex-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/development/ai/task-progress.yaml
-product: AI Harness Platform
+product: Forge Harness
 formula: Model + Harness = Agent
 website_policy: retained_public_shell_not_console_core
 
@@ -117,6 +117,22 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: brand-rename-forge-harness
+    date: 2026-08-20
+    status: completed
+    demo: Forge Harness is the public product name across the repository, website, Console, Desktop, API metadata, and release configuration; the GitHub repository is luohao0308/forge-harness.
+    verification_result: local_branding_docs_api_and_repository_rename_verified
+    verification_commands:
+      - python3 scripts/generate-api-docs.py
+      - python3 scripts/validate-docs.py
+      - git diff --check
+      - gh repo view luohao0308/forge-harness --json nameWithOwner,url,description
+      - git remote -v
+    acceptance_notes:
+      - Public-facing copy uses Forge Harness while Model + Harness = Agent remains the architecture formula.
+      - HARNESS_* environment variables, agent-harness package/runtime identifiers, service names, and protocol headers remain compatible identifiers.
+      - README, active product docs, website metadata, Console title, Desktop product name, API/OpenAPI metadata, and GitHub release links were refreshed.
+      - GitHub renamed the online repository from luohao0308/harness to luohao0308/forge-harness and keeps the old URL redirect.
   - id: platform-managed-ai-provider-integration
     date: 2026-07-31
     status: completed
@@ -4999,6 +5015,326 @@ post_stage_hardening:
       - "The user can approve, merge, split further, reorder, add, or remove slices; after approval, execution auto-continues without per-slice confirmation."
       - "Exactly one slice may be in_progress, and material scope/order/interface/migration/risk changes require a revised decomposition and another confirmation."
       - "The lightweight OPC default remains one branch and one PR for the whole plan; multiple PRs are reserved for independently shippable or risk-isolated slices."
+
+  - id: desktop-reliability-closeout-2026-08-17
+    date: 2026-08-17
+    status: completed_with_external_release_evidence_pending_and_local_macos_budget_failure
+    demo: "Desktop reliability closeout restores legacy Console route compatibility, makes strict Desktop type-checking environment-aware, and independently validates the three-platform startup evidence set before GitHub Release creation."
+    verification_result: "routes_types_release_evidence_full_regression_and_documentation_gates_passed_local_macos_x64_gate_failed_external_runner_p95_pending"
+    verification_commands:
+      - "cd apps/agent-console && npx vitest run src/app/__tests__/routeInventory.test.tsx src/app/__tests__/routes.auth.test.tsx --reporter=dot -> 2 files / 13 tests passed"
+      - "cd apps/agent-console && npx playwright test --project=chromium e2e/sidebar-enterprise.smoke.spec.ts -> 44 passed"
+      - "cd apps/agent-console && npm run lint -- --pretty false && npm run build -> passed; 2414 modules"
+      - "cd apps/desktop-app && npm run type-check -> passed across build/browser/test TypeScript projects"
+      - "cd apps/desktop-app && npm run build:main -> passed"
+      - "cd apps/desktop-app && npm test -- --run -> 38 files / 324 tests passed"
+      - "cd apps/desktop-app && npm run test:startup-budget -> 10 passed"
+      - "cd apps/desktop-app && npm run package -- --config.directories.output=release-reliability-closeout -> unsigned macOS x64 directory package built"
+      - "cd apps/desktop-app && HARNESS_DESKTOP_EXECUTABLE=<packaged-x64-executable> HARNESS_DESKTOP_STARTUP_REPORT_PATH=<darwin-x64-report> npm run check:startup-budget -> five samples; P95 total 7314 ms and renderer phase 4999 ms; failed against 6000/3500 ms budgets"
+      - "cd apps/desktop-app && HARNESS_DESKTOP_EXECUTABLE=<packaged-x64-executable> HARNESS_DESKTOP_STARTUP_REPORT_PATH=<darwin-x64-rerun-report> npm run check:startup-budget -> five samples; P95 total 6480 ms and renderer phase 4828 ms; failed against 6000/3500 ms budgets"
+      - "direct packaged macOS x64 startup smoke with isolated userData -> one sample total 4095 ms; passed"
+      - "cd apps/desktop-app && node --check scripts/startup-budget-lib.mjs scripts/startup-evidence-lib.mjs scripts/validate-startup-budget-artifacts.mjs scripts/release-workflow-contract.test.mjs -> passed"
+      - "ruby -e 'require \"yaml\"; YAML.load_file(\".github/workflows/release.yml\")' -> passed"
+      - "python3 scripts/validate-docs.py -> passed"
+      - "python3 scripts/check-markdown-links.py -> passed"
+      - "git diff --check -> passed"
+    acceptance_notes:
+      - "APP-001 and APP-002 are closed with replace redirects that preserve query/hash state; legacy specialist paths are registered before the dynamic subagent ID route."
+      - "DESK-001 is closed with explicit main-process, browser-adapter, and test TypeScript boundaries while retaining strict mode and checking test fixtures."
+      - "Release CI now validates exactly one five-sample passing report for each expected macOS/Windows/Linux x64 artifact, recomputes aggregate fields, enforces shared app version, and publishes desktop-startup-evidence.json before github-release."
+      - "The local unsigned macOS 14.4.1 x64 preflight produced two reproducible failing five-sample aggregates despite one passing 4095 ms sample, so the gate is detecting startup variance rather than accepting a cherry-picked launch."
+      - "REL-001 remains open for startup-variance diagnosis and real five-sample P95 values from a future signed/tagged macOS/Windows/Linux GitHub Release runner; no local result is presented as that external evidence."
+
+  - id: desktop-startup-p95-optimization-2026-08-17
+    date: 2026-08-17
+    status: completed_with_cold_run_residual_and_external_runner_evidence_pending
+    demo: "Desktop startup now exposes optional critical-path diagnostics, installs a verified pre-migrated SQLite template only for pristine profiles, and avoids preloading the non-initial subagents feature chunk in Desktop builds."
+    verification_result: "startup_instrumentation_sqlite_template_desktop_preload_and_packaged_rerun_verified_first_cold_run_still_over_budget"
+    verification_commands:
+      - "cd apps/desktop-app && npx vitest run src/services/__tests__/startup-performance.test.ts src/services/__tests__/local-runtime.test.ts src/services/__tests__/local-runtime-native.integration.test.ts --reporter=dot -> passed; native integration executed"
+      - "cd apps/desktop-app && npm run test:startup-budget -> passed"
+      - "cd apps/agent-console && npm run build with HARNESS_DESKTOP_BUILD=1 -> passed; feature-subagents chunk retained but absent from index.html modulepreload"
+      - "cd apps/agent-console && npm run build without HARNESS_DESKTOP_BUILD=1 -> passed; browser index.html retains feature-subagents modulepreload"
+      - "cd services/api-server && .venv/bin/python -m pytest tests/test_build_harnessd.py tests/test_harnessd.py tests/test_sqlite_runtime_storage.py -q -> 35 passed"
+      - "cd services/api-server && .venv/bin/python -m ruff check app/cli/harnessd.py app/db/sqlite_candidate_migration.py scripts/build-harnessd.py tests/test_build_harnessd.py tests/test_sqlite_runtime_storage.py -> passed"
+      - "cd apps/desktop-app && npm run package -- --config.directories.output=release-reliability-closeout-optimized -> unsigned macOS x64 directory package built"
+      - "optimized package first five-sample gate -> P95 total 6297 ms and renderer phase 4358 ms; failed against 6000/3500 ms budgets"
+      - "optimized package second five-sample gate -> P95 total 4286 ms and renderer phase 3145 ms; passed"
+      - "optimized package final rebuild five-sample gate -> P95 total 3868 ms and renderer phase 2960 ms; passed"
+      - "optimized runtime manifest -> pre-migrated SQLite template revision 20260807_0050 included in hashed files"
+      - "python3 scripts/validate-docs.py -> passed"
+      - "python3 scripts/check-markdown-links.py -> passed"
+      - "git diff --check -> passed"
+    acceptance_notes:
+      - "Startup diagnostics are optional and do not alter schema v1 required fields, budget values, P50/P95 aggregation, or passed/violation semantics."
+      - "The SQLite template is empty of users, organizations, tasks, and stored secrets; existing databases never take the template path."
+      - "The first cold-cache local sample remains a real residual; the second passing aggregate is recorded as repeatability evidence, not as proof that formal Release runners will pass."
+      - "REL-001 remains open until signed/tagged macOS/Windows/Linux Release runners produce their own five-sample evidence."
+
+  - id: feature-catalog-pilot-2026-08-17
+    date: 2026-08-17
+    status: completed
+    demo: Harness now has a machine-readable three-level feature catalog, generated maturity matrix, task-aware AI brief matching, and docs drift gates.
+    verification_result: feature_catalog_schema_semantics_generation_query_brief_and_docs_gates_passed
+    verification_commands:
+      - "python3 -m py_compile scripts/feature_catalog.py scripts/test_feature_catalog.py scripts/agent-context-brief.py scripts/validate-docs.py -> passed"
+      - "python3 scripts/feature_catalog.py --validate -> 63 items, 8 domains, 14 capabilities, 41 features"
+      - "python3 scripts/feature_catalog.py --generate && python3 scripts/feature_catalog.py --check -> passed; deterministic docs/FEATURE-MATRIX.md"
+      - "python3 -m unittest scripts.test_feature_catalog -v -> 8 passed"
+      - "python3 scripts/agent-context-brief.py --task 'RAG retrieval and Run Detail grounding' -> feature and ancestor matches passed"
+      - "python3 scripts/agent-context-brief.py --task 'Desktop startup P95 release evidence' -> release-startup-evidence match passed"
+      - "python3 scripts/agent-context-brief.py --task 'Team task graph dependency' -> task-graph match passed"
+      - "python3 scripts/validate-docs.py -> passed, including catalog validation, matrix drift, and brief fixtures"
+      - "bash scripts/check-docs.sh -> passed; Markdown links 351 files / 520 local links"
+      - "git diff --check -> passed"
+    acceptance_notes:
+      - "Feature catalog authority is docs/development/ai/feature-catalog.json with adjacent JSON Schema; the generated human view is docs/FEATURE-MATRIX.md. JSON keeps the current standard-library docs CI path dependency-free."
+      - "The catalog separates implementation_status from maturity and requires evidence for verified leaf features; no feature is marked production_proven."
+      - "The catalog covers Agent Runtime, Workspace/Console, Knowledge/Context, Tools/MCP/Sandbox, Teams, Events/Eval/Observability, Enterprise Security/Deployment, and Desktop/Terminal/Mobile."
+      - "Feature query returns the matched concrete item before required ancestors, ignores platform-only and substring false positives, and keeps deterministic limits."
+      - "Docs validation directly runs feature catalog validate/check and the standard-library regression suite; PR docs-validation cannot bypass the catalog gate."
+      - "No product runtime, API, database, deployment behavior, external dependency, or dev-workflow distribution repository was changed."
+      - "REL-001 and OPS-001 remain open in the Task Board; their gaps are represented in the catalog rather than promoted to production evidence."
+
+  - id: feature-catalog-dev-workflow-extraction-2026-08-17
+    date: 2026-08-17
+    status: completed
+    demo: The Harness pilot is now available as an optional, standard-library-only feature-catalog pack in dev-workflow 0.3.0 without transferring Harness product data.
+    verification_result: optional_pack_schema_template_tool_audit_install_uninstall_and_preservation_contracts_passed
+    verification_commands:
+      - "dev-workflow: python3 -m json.tool on feature-catalog Schema and template -> passed"
+      - "dev-workflow: python3 -m py_compile packs/feature-catalog/scripts/feature_catalog.py tests/test_feature_catalog.py -> passed"
+      - "dev-workflow: python3 -m unittest tests.test_feature_catalog -v -> 13 passed"
+      - "dev-workflow: LC_ALL=C LANG=C bash tests/integration.sh -> passed"
+      - "dev-workflow: bash -n scripts/install.sh scripts/audit.sh scripts/uninstall.sh tests/integration.sh -> passed"
+      - "dev-workflow: git diff --check -> passed before Harness writeback"
+    acceptance_notes:
+      - "feature-catalog is optional; Core-only and other pack behavior remains unchanged, and the manifest remains schema 2."
+      - "The pack owns only the generic Schema, template, guide, and Python tool. Active feature-catalog.json and generated FEATURE-MATRIX.md remain target-project data and survive partial or full uninstall."
+      - "Harness keeps its 63-item catalog, task-aware brief integration, docs gates, and customized project tool unchanged; no project facts were copied into the distribution template."
+      - "The distribution version advances from the corrected v0.2.1 baseline to 0.3.0. No commit, tag, push, release, or Harness workflow reinstallation was performed."
+      - "Generic platform tags are project-defined, and not_started/in_progress features may honestly record missing tests or evidence; verified and production maturity gates remain evidence-backed."
+      - "PowerShell audit and integration paths were implemented symmetrically but not executed locally because pwsh is unavailable."
+
+  - id: desktop-next-capabilities-roadmap-approved-2026-08-17
+    date: 2026-08-17
+    status: in_progress
+    demo: The approved Desktop roadmap has completed DESK-002 through DESK-006; REL-001 remains externally blocked for formal three-platform Release evidence.
+    verification_result: rel_001_blocked_desk_002_through_desk_006_completed
+    verification_commands:
+      - "python3 scripts/validate-docs.py -> passed"
+      - "python3 scripts/check-markdown-links.py -> passed; 353 files / 525 local links"
+      - "ruby -e 'require \"yaml\"; YAML.load_file(\"docs/development/ai/task-progress.yaml\")' -> passed"
+      - "git diff --check -> passed"
+    acceptance_notes:
+      - "The user approved the order REL-001 -> unified attention center -> native change review -> Triggers/background automation -> project knowledge auto-index -> full offline Agent."
+      - "REL-001 is blocked rather than completed because no formal macOS/Windows/Linux Release runner environment is currently available and its three-platform acceptance evidence is still missing."
+      - "The user approved an ordering exception while REL-001 remained paused; DESK-002 through DESK-006 are complete."
+      - "The approved plan records outcome, scope, dependency, acceptance, rollback, drift control, test matrix, and safety boundaries for all six slices."
+      - "No external Release or credentialed operation was started; DESK-005 stayed within the confirmed S5 migration/API/scanner/indexing scope."
+
+  - id: desktop-attention-center-desk-002-2026-08-17
+    date: 2026-08-17
+    status: completed
+    demo: "Desktop now has one compact attention center for organization-scoped approvals, abnormal Runs, Team intervention items, local sync conflicts/errors, and local Runtime recovery."
+    verification_result: "backend_projection_permissions_console_actions_desktop_preload_contract_visual_responsiveness_and_docs_gates_passed"
+    verification_commands:
+      - "cd services/api-server && .venv/bin/python -m pytest tests/test_desktop_attention.py tests/test_desktop_sync.py -q -> 13 passed"
+      - "cd services/api-server && .venv/bin/python -m ruff check app/api/desktop_sync.py tests/test_desktop_attention.py -> passed"
+      - "cd apps/agent-console && npx vitest run src/features/attention/pages/__tests__/AttentionCenterPage.test.tsx src/app/__tests__/routeInventory.test.tsx src/app/__tests__/ConsoleShell.render.test.tsx --reporter=dot -> 3 files / 24 tests passed"
+      - "cd apps/agent-console && npm run lint -- --pretty false -> passed"
+      - "cd apps/agent-console && npm run build -> passed; 2415 modules transformed; AttentionCenterPage chunk emitted"
+      - "cd apps/desktop-app && npx vitest run src/__tests__/preload-extended.test.ts src/services/__tests__/offline-sync-runtime.test.ts --reporter=dot -> 2 files / 20 tests passed"
+      - "cd apps/desktop-app && npm run type-check -> passed"
+      - "cd apps/desktop-app && npm run build:main -> passed"
+      - "browser visual check at /attention -> wide, approximately 330px content width, filtered empty state, and long content passed with no horizontal overflow"
+      - "python3 scripts/generate-api-docs.py -> generated reference; main JSON/YAML and website JSON/YAML attention path plus schemas match"
+      - "python3 scripts/feature_catalog.py --generate -> valid; 64 items, 8 domains, 14 capabilities, 42 features"
+    acceptance_notes:
+      - "GET /api/desktop/attention is principal- and organization-scoped, bounded, severity/time stable-sorted, globally limited, and avoids duplicating WAITING_APPROVAL Runs that already have pending approvals."
+      - "Admin approval items expose approve/reject/open while non-admin users receive open only; empty, authentication, organization isolation, deduplication, and truncation cases have regression coverage."
+      - "The /attention page filters server categories, refreshes authoritative state after approval decisions, merges Desktop sync and Runtime recovery items, and keeps server results when a local source fails."
+      - "Electron preload now exposes sync.getConflicts through the trusted IPC bridge; the browser path remains usable without preload."
+      - "The Desktop operation rail labels the route as 待处理; the old desktop_panel=approvals path and original Run, Team, approval, and sync sources remain compatible."
+      - "OpenAPI reference, canonical public contract, and website copies include the new route and response schemas; Feature Catalog records desktop-attention-center as verified production_candidate."
+      - "DESK-002 is complete and the approved roadmap advanced to DESK-003. REL-001 remains blocked, not completed, until formal macOS/Windows/Linux Release runner evidence exists."
+
+  - id: desktop-change-review-desk-003-2026-08-17
+    date: 2026-08-17
+    status: completed
+    demo: "Desktop now provides a root-confined native Git change-review workspace with structured status and hunk Diff, safe explicit stage/unstage/revert, whole-file handling for untracked files, and organization-scoped Run/Approval audit."
+    verification_result: "desktop_git_ipc_mutations_audit_console_responsiveness_openapi_catalog_and_docs_gates_passed"
+    verification_commands:
+      - "cd apps/desktop-app && npm test -- --run -> 40 files / 337 tests passed"
+      - "cd apps/desktop-app && npm run type-check && npm run build:main -> passed"
+      - "cd apps/agent-console && npx vitest run src/features/changes/pages/__tests__/ChangeReviewPage.test.tsx src/app/__tests__/routeInventory.test.tsx src/app/__tests__/ConsoleShell.render.test.tsx src/app/__tests__/routes.auth.test.tsx --reporter=dot -> 4 files / 40 tests passed"
+      - "cd apps/agent-console && npm run lint -- --pretty false && npm run build -> passed; 2416 modules transformed"
+      - "cd services/api-server && .venv/bin/python -m pytest tests/test_desktop_change_review_audit.py tests/test_desktop_attention.py -q -> 22 passed"
+      - "cd services/api-server && .venv/bin/python -m pytest tests/test_desktop_attention.py tests/test_desktop_change_review_audit.py tests/test_desktop_sync.py tests/test_desktop_sync_integration.py -q -> 35 passed"
+      - "cd services/api-server && .venv/bin/python -m ruff check app/api/desktop_sync.py app/events/event_types.py tests/test_desktop_attention.py tests/test_desktop_change_review_audit.py -> passed"
+      - "five OpenAPI change-review endpoint/request/response subsets -> canonical semantic SHA-256 7f6501b7a6a137a899841ce2f2f1567814cf28826e7474b131e2048f4c36b679"
+      - "browser /changes fallback -> wide and narrow viewports visible with no document-level horizontal overflow"
+      - "python3 scripts/feature_catalog.py --validate -> 65 items, 8 domains, 14 capabilities, 43 features"
+      - "python3 scripts/feature_catalog.py --generate && python3 scripts/feature_catalog.py --check -> passed; deterministic docs/FEATURE-MATRIX.md"
+      - "python3 -m unittest scripts.test_feature_catalog -v -> 8 passed"
+      - "python3 scripts/validate-docs.py -> passed"
+      - "git diff --check -> passed"
+    acceptance_notes:
+      - "Git commands use fixed argument arrays with shell disabled; renderer input cannot supply arbitrary flags, reset, clean, checkout, or force operations."
+      - "Workspace root, relative path, realpath, symlink, token expiry, patch identity, timeout, output limit, binary, conflict, and untracked-file cases have explicit behavior and regression coverage."
+      - "Mutations require requested and completed audit receipts; failed completion audit rolls back the Git mutation, while Admin/Engineer authorization and task/run/approval organization binding are enforced server-side."
+      - "Untracked text files visibly select and stage all hunks as one file; explicit revert remains the only action that deletes their contents."
+      - "The 900px single-panel breakpoint, arrow-key focus navigation, Enter activation, and confirmation-cancel behavior match DESIGN.md and have focused coverage."
+      - "Concurrent duplicate audit writes remain an application-level idempotency residual without a database uniqueness constraint; formal signed three-platform Electron smoke remains attached to REL-001."
+      - "DESK-003 is complete and the approved roadmap advanced to DESK-004. REL-001 remains blocked, not completed, until formal macOS/Windows/Linux Release runner evidence exists."
+
+  - id: desktop-trigger-contract-discovery-desk-004-2026-08-17
+    date: 2026-08-17
+    status: in_progress
+    demo: "DESK-004 read-only discovery mapped the existing Webhook Trigger, local SQLite runtime jobs, server Dramatiq boundary, Agent Run execution path, and Desktop management surfaces; implementation is paused at the approved migration/API drift gate."
+    verification_result: "database_migration_and_additive_public_trigger_api_require_user_reconfirmation_before_product_changes"
+    verification_commands:
+      - "python3 scripts/agent-context-brief.py --task 'Continue approved Desktop roadmap with DESK-004 Trigger and background automation while REL-001 remains blocked' -> completed"
+      - "Read-only inspection of triggers.py, Trigger schemas/models/migration/tests, runtime_jobs coordinator/repository/handlers/tests, main.py/harnessd.py, Agent Run execute paths, Console trigger API, Agent Studio, and Desktop rail -> completed"
+      - "git status --short -> existing dirty worktree preserved; no DESK-004 product code or Schema changes"
+    acceptance_notes:
+      - "The current public Webhook Trigger creates a new planned Run for every request and has no idempotency key, invocation/history resource, retry record, schedule, file, or Git source."
+      - "The local RuntimeJobCoordinator already provides SQLite active dedupe, leases, heartbeat, fencing, retry, cancellation, and expired-job recovery; it must remain local-only and cannot expose its internal periodic jobs as product Triggers."
+      - "The revised S4 requires extending triggers and adding trigger_invocations through one SQLite/PostgreSQL Alembic migration, while preserving existing Webhook rows, endpoint URLs, one-time secrets, and response fields."
+      - "The API extension is additive: discriminated trigger type/config, optional Webhook Idempotency-Key, invocation history, and soft delete; replay returns the same invocation and Run, and retries do not auto-approve Policy/Approval gates."
+      - "Schedule, file, and Git polling are local-profile capabilities; file/Git paths stay workspace-root confined and server profile fails closed. A global kill switch stops new invocation and scheduling without deleting configuration or history."
+      - "Database migration and public API changes both require user reconfirmation under the approved roadmap drift control. No implementation, migration, external Release, credentialed operation, or production change has started."
+
+  - id: desktop-trigger-automation-desk-004-2026-08-18
+    date: 2026-08-18
+    status: completed
+    demo: "Desktop automation now manages Webhook, schedule, file, and Git Triggers through one durable idempotent invocation/Run path with reliable local/server execution and auditable history."
+    verification_result: "migration_invocation_reliability_workspace_safety_desktop_management_openapi_responsive_ui_and_full_regression_passed"
+    verification_commands:
+      - "cd services/api-server && .venv/bin/python -m pytest tests -> 1614 passed, 3 warnings"
+      - "cd services/api-server && .venv/bin/ruff check app tests -> passed"
+      - "cd services/api-server && .venv/bin/python -m pytest tests/test_triggers.py tests/test_trigger_runtime_jobs.py tests/test_trigger_dispatch_worker.py tests/test_tool_approvals.py tests/test_local_worker_import_boundary.py -q -> 147 passed, 3 warnings"
+      - "cd services/api-server && .venv/bin/python -m pytest tests/test_triggers.py tests/test_tool_approvals.py -q -> 32 passed, 3 warnings after direct execute/step-resume/approval-continuation bypass regressions"
+      - "Independent final Trigger bypass review -> PASS after correcting the busy-lease regression to cross the workspace gate and assert real tool execution plus transaction rollback"
+      - "cd services/api-server && .venv/bin/python -m pytest tests/test_trigger_migration.py -q -> 5 passed"
+      - "SQLite Alembic upgrade 20260817_0051 -> downgrade 20260807_0050 -> upgrade head; .venv/bin/alembic heads -> 20260817_0051 (head)"
+      - "cd apps/agent-console && npm test -- --run src/features/automations -> 4 files / 9 tests passed"
+      - "cd apps/agent-console && npm run lint && npm run build -> passed; 2417 modules transformed"
+      - "cd apps/desktop-app && npm test -- --run -> 40 files / 337 tests passed; npm run type-check -> passed"
+      - "docker compose -f deploy/docker-compose/docker-compose.yml config -> passed"
+      - "python3 scripts/generate-api-docs.py -> invocation list/detail present in reference; canonical and website JSON/YAML Trigger subsets synchronized"
+      - "browser /agents?desktop_panel=triggers -> wide and 390px narrow layouts, Webhook create/one-time secret/history, schedule/file/git forms, no horizontal overflow or console errors"
+      - "python3 scripts/feature_catalog.py --generate && python3 scripts/feature_catalog.py --check -> passed"
+      - "python3 scripts/validate-docs.py && git diff --check -> passed"
+    acceptance_notes:
+      - "One SQLite/PostgreSQL Alembic migration expands Trigger configuration and adds trigger_invocations without deleting existing Webhook secrets or rows."
+      - "All four sources create bounded receipts before execution; idempotency replay, leases, fencing, retries, cancellation, approval continuation, and resume preserve one invocation and Run."
+      - "Local runtime jobs and server durable outbox/Dramatiq remain separate execution boundaries; file scanning uses bounded fair batches and hash caching."
+      - "file/git workspace access comes from the persisted invocation and trusted Desktop selector; server profile, missing workspace, path escape, shell, Git, sandbox, subagent, selective resume, and orchestration bypasses fail closed."
+      - "Direct endpoint regressions prove Trigger-owned /runs/{id}/execute re-enters the invocation path, step-selective resume returns 409, approval continuation calls the invocation executor, and a busy lease rolls approval/tool/task state back without bare Executor use."
+      - "API responses redact runtime state and absolute paths, payload summaries are bounded, and Webhook secrets are returned only once."
+      - "DESK-004 is complete and the approved roadmap advanced to DESK-005. REL-001 remains blocked, not completed, until formal macOS/Windows/Linux Release runner evidence exists."
+
+  - id: desktop-project-knowledge-discovery-desk-005-2026-08-18
+    date: 2026-08-18
+    status: completed
+    demo: "DESK-005 read-only discovery mapped the existing Knowledge versioning/RAG citation chain and Desktop/file Trigger scan chain; the user approved the migration/API revision and implementation proceeded."
+    verification_result: "project_index_discovery_and_user_confirmation_completed"
+    verification_commands:
+      - "python3 scripts/agent-context-brief.py --task 'Continue approved Desktop roadmap with DESK-005 project knowledge auto-index while REL-001 remains blocked' -> completed"
+      - "Read-only inspection of KnowledgeSource/Document/Chunk lifecycle, RAG citations, Context manifests, Desktop file IPC/profile persistence, Trigger file scanner, and focused tests -> completed"
+      - "AUTH_JWT_SECRET and HARNESS_SECRET_ENCRYPTION_KEY test placeholders docker compose -f deploy/docker-compose/docker-compose.yml config --quiet -> passed"
+      - "python3 scripts/validate-docs.py and git diff --check before discovery write-back -> passed"
+      - "python3 scripts/feature_catalog.py --generate/check and python3 -m unittest scripts.test_feature_catalog -v -> 67 items / 8 domains / 14 capabilities / 45 features; 8 tests passed"
+      - "python3 scripts/validate-docs.py and git diff --check after discovery write-back -> passed"
+    acceptance_notes:
+      - "Knowledge ingestion already versions documents, marks superseded chunks stale, and binds retrieval hits/citations to immutable source snapshots; file Trigger scanning already provides bounded hashes, deletion observations, and symlink/root confinement."
+      - "The two chains are not connected: file observations do not ingest content, Desktop file watch is root-only and memory-scoped, and Knowledge has no durable project binding, complete snapshot, per-path tombstone, or restart cursor contract."
+      - "The revised S5 adds project_knowledge_indexes/project_knowledge_files through one SQLite/PostgreSQL migration and additive create/list/sync/pause/resume/unbind Knowledge APIs."
+      - "Desktop keeps absolute roots in profile-scoped trusted state, sends bounded complete snapshots, and never treats a truncated scan as deletion; API responses and citation UI expose only project-relative paths."
+      - "The user explicitly confirmed the revised SQLite/PostgreSQL migration and additive Knowledge API; S5.1-S5.4 then completed without external Release or credentialed operation."
+
+  - id: desktop-project-knowledge-index-desk-005-2026-08-19
+    date: 2026-08-19
+    status: completed
+    demo: "Desktop safely indexes a Profile-scoped local project into versioned Knowledge, manages lifecycle from the Knowledge workbench, and shows real project-relative Citation evidence without exposing absolute paths."
+    verification_result: "persistence_scanner_incremental_index_lifecycle_citations_migration_console_desktop_browser_docs_and_catalog_gates_passed"
+    verification_commands:
+      - "cd services/api-server && .venv/bin/python -m pytest tests/test_knowledge_rag.py tests/test_project_knowledge_indexes.py tests/test_project_knowledge_migration.py -q -> 53 passed"
+      - "cd services/api-server && .venv/bin/ruff check app tests/test_project_knowledge_indexes.py tests/test_project_knowledge_migration.py -> passed"
+      - "cd services/api-server && .venv/bin/python -m pytest tests/test_project_knowledge_migration.py -q -vv -> SQLite round trip, PostgreSQL compile, and downgrade guard 3 passed"
+      - "cd services/api-server && .venv/bin/alembic heads -> 20260818_0052 (head)"
+      - "cd apps/desktop-app && npm test -- --run --reporter=dot -> 40 files / 339 tests passed"
+      - "cd apps/desktop-app && npm run type-check && npm run build:main -> passed"
+      - "cd apps/agent-console && npx vitest run project-knowledge-sync, ProjectKnowledgeIndexPanel, KnowledgePage, RunDetailPage focused files -> 5 files / 24 tests passed"
+      - "cd apps/agent-console && npx vitest run DESK-005 focused files plus tasks/api.test.ts -> 6 files / 41 tests passed"
+      - "cd apps/agent-console && full Vitest default and single-fork runs -> each 107/108 files and 809/810 tests; unrelated Team timing and known local-runtime window.location pollution failures passed isolated reruns (1/1 and 3/3)"
+      - "cd apps/agent-console && npm run lint -- --pretty false && npm run build -> passed; 2419 modules transformed"
+      - "python3 scripts/generate-api-docs.py -> project-index create/list/detail/sync/pause/resume/unbind contracts generated"
+      - "browser /knowledge -> wide and 390px layouts visible without horizontal overflow, alerts, warnings, or console errors"
+      - "python3 scripts/feature_catalog.py --generate && --check; python3 scripts/validate-docs.py; git diff --check -> passed"
+    acceptance_notes:
+      - "Project indexes and per-file receipts isolate organization, agent, Desktop Profile, and irreversible root identity; absolute workspace paths are not stored by the API or rendered in citations."
+      - "The native scanner rejects root and descendant symlinks, traversal, invalid UTF-8, oversized/changed files, budget exhaustion, and built-in secret/environment/dependency/build paths; user ignore rules only add exclusions."
+      - "Only complete snapshots tombstone missing files. Incomplete or truncated snapshots retain unseen documents; changed documents create a new version and stale old chunks while historical RetrievalHit/Citation snapshots remain immutable."
+      - "The Knowledge workbench supports bind, ignore, status/error, rescan, pause, resume, and confirmed unbind; browser fallback stays read-only and unlink archives the KnowledgeSource without modifying project files."
+      - "Startup, debounced file changes, Profile changes, and a 30-second fallback coalesce synchronization. Post-scan Profile/root checks, generation invalidation, abortable first-link create/sync requests, and same-key unbind compensation prevent stale uploads or ACTIVE empty-index orphans after context switches."
+      - "Run Detail validates and renders project:// relative URI, full file SHA-256, and document version. Privacy copy states that indexed text content is sent to the configured Harness API while the absolute directory path stays local."
+      - "Final independent review returned PASS after the initial-link Profile race and committed-create orphan window were closed; compensation-network failure remains a low-risk recoverable boundary surfaced by refresh."
+      - "DESK-006 is complete after offline Agent, sync, console, package, catalog, docs, and diff gates passed. The local macOS x64 directory package is unsigned and unnotarized; REL-001 remains blocked until formal macOS/Windows/Linux Release runner evidence exists."
+
+  - id: desktop-offline-agent-desk-006-2026-08-19
+    date: 2026-08-19
+    status: completed
+    demo: "Desktop now runs a complete auditable offline Agent from a Profile-scoped SQLite state machine with restricted workspace tools, mandatory write approval, cancellation/recovery, and idempotent online evidence import."
+    verification_result: "offline_runtime_security_sync_console_backend_catalog_docs_and_local_package_gates_passed"
+    verification_commands:
+      - "cd apps/desktop-app && npm test -- --run --reporter=dot -> 42 files / 351 tests passed"
+      - "cd apps/desktop-app && npm run type-check -> passed"
+      - "cd apps/desktop-app && npm run build:main -> passed"
+      - "cd apps/agent-console && npx vitest run src/features/settings/pages/__tests__/AdvancedFeaturesPage.test.tsx --reporter=dot -> 1 file / 5 tests passed"
+      - "cd apps/agent-console && npm run lint -- --pretty false -> passed"
+      - "cd apps/agent-console && npm run build -> passed; 2419 modules transformed"
+      - "cd services/api-server && .venv/bin/python -m pytest tests/test_desktop_sync.py tests/test_desktop_sync_integration.py tests/test_desktop_sync_operations.py -q -> 23 passed"
+      - "cd services/api-server && .venv/bin/python -m ruff check app/api/desktop_sync.py tests/test_desktop_sync_operations.py -> passed"
+      - "python3 scripts/feature_catalog.py --validate && --check; python3 -m unittest scripts.test_feature_catalog -v -> 8 passed"
+      - "python3 scripts/validate-docs.py -> passed"
+      - "git diff --check -> passed"
+      - "cd apps/desktop-app && npm run package -> macOS x64 directory package completed; signing/notarization skipped because no local Developer ID or Apple credentials"
+    acceptance_notes:
+      - "Profile-scoped offline-sync.sqlite stores Run, Event, ModelCall, ToolCall, and ToolApproval records with durable terminal states."
+      - "Local model failure uses deterministic fallback; model output and tool output are untrusted and never gain tool authority."
+      - "Only workspace.list_files, workspace.read_text, and workspace.write_text are accepted through typed preload IPC; workspace writes always require explicit approval."
+      - "Cancel, crash recovery, Profile switch interruption, resume, and legacy IN_PROGRESS queue recovery preserve bounded state transitions."
+      - "Terminal snapshots sync as offline_agent_run and import idempotently into canonical Task/AgentRun/Event/ModelCall/ToolCall/ToolApproval evidence; malformed snapshots become sync conflicts."
+      - "The local package is useful build evidence only. It does not satisfy REL-001's signed macOS/Windows/Linux five-sample Release runner acceptance."
+
+  - id: desktop-trigger-integrity-hardening-hard-001-2026-08-20
+    date: 2026-08-20
+    status: completed
+    demo: "Desktop, Trigger, Project Knowledge, offline sync, offline Agent, and Change Review now enforce organization/workspace ownership, monotonic evidence, approval-safe file mutation, durable retry boundaries, and concurrent audit idempotency with fail-closed behavior at unsupported boundaries."
+    verification_result: "s1_s5_backend_desktop_console_contract_docs_and_local_packaged_evidence_passed_formal_release_runner_remains_rel001_blocked"
+    verification_commands:
+      - "cd services/api-server && .venv/bin/python -m pytest tests -> 1647 passed; 3 existing DeprecationWarnings"
+      - "cd services/api-server && .venv/bin/python -m pytest tests/test_desktop_change_review_audit.py tests/test_project_knowledge_indexes.py tests/test_project_knowledge_migration.py -q -> 27 passed"
+      - "cd services/api-server && .venv/bin/ruff check app tests alembic/versions/20260819_0053_change_review_audit_idempotency.py -> passed"
+      - "cd apps/desktop-app && npm test -- --run -> 42 files / 360 tests passed"
+      - "cd apps/desktop-app && npm run type-check && npm run build:main -> passed"
+      - "cd apps/agent-console && npm test -- --run -> stable rerun 108 files / 812 tests passed; initial parallel run had 6 transient timing failures and all tests passed on rerun"
+      - "cd apps/agent-console && npm test -- --run src/lib/__tests__/project-knowledge-sync.test.ts src/features/knowledge/components/__tests__/ProjectKnowledgeIndexPanel.test.tsx src/features/knowledge/pages/__tests__/KnowledgePage.test.tsx -> 3 files / 13 tests passed"
+      - "cd apps/agent-console && npm run lint && npm run build -> passed; 2419 modules transformed"
+      - "python3 scripts/feature_catalog.py --validate && python3 scripts/feature_catalog.py --check && python3 -m unittest scripts.test_feature_catalog -v -> valid; 8 tests passed"
+      - "python3 scripts/generate-api-docs.py -> canonical, reference, and website OpenAPI artifacts regenerated"
+      - "python3 scripts/validate-docs.py && git diff --check -> passed"
+      - "cd apps/desktop-app && npm run package -> macOS x64 directory package completed; signing/notarization unavailable locally"
+      - "apps/desktop-app/dist/startup-budget-report-darwin-x64.json -> 5 packaged samples passed; total P95 3846ms <= 6000ms"
+    acceptance_notes:
+      - "File approval uses no-replace hard-link semantics for new files and fails closed for existing files when a portable compare-and-swap cannot be proven; no approved write can silently overwrite an existing file."
+      - "Change Review completed audit writes have a database uniqueness boundary for the audited phase and reconcile concurrent IntegrityError responses to the existing receipt."
+      - "Project Knowledge snapshots carry an optional generation for new clients while preserving old-client compatibility; generation ordering is monotonic and no longer depends only on client wall-clock time."
+      - "Offline queue conflicts are keyed by operation_id, so a failed older revision cannot mark a newer operation for the same entity as failed."
+      - "Architecture findings have regression evidence. Independent code-reviewer was unavailable after two service 429 responses, so no independent APPROVE is claimed."
+      - "HARD-001 is complete. REL-001 remains paused because the local unsigned macOS package cannot replace signed/tagged macOS/Windows/Linux Release runner evidence."
 
 stage_completion_rule:
   - run_backend_tests

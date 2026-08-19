@@ -2,14 +2,14 @@
 
 ## Target Reset
 
-Harness Team Mode is not a Run, Trace, Observability, assignment, or Agent Workspace
+Forge Harness Team Mode is not a Run, Trace, Observability, assignment, or Agent Workspace
 variant. Runs and sessions may exist as implementation evidence, but they must not shape the
 Team Mode product surface. The user-facing result is a long-lived team collaboration room
 with a Leader, teammates, mailboxes, wake/status transitions, task steps, and horizontal chat
 columns.
 
 Use Harness colors, typography scale, and slate/page/panel tokens only as the skin. Structure,
-message routing, wake behavior, and backend-visible semantics must follow the Harness Team
+message routing, wake behavior, and backend-visible semantics must follow the Forge Harness Team
 Mode contract below.
 
 ## Product Invariant
@@ -60,7 +60,7 @@ must stay compact enough for agent-to-agent coordination:
 
 The first viewport must preserve the Team Mode product shape:
 
-- Harness ConsoleShell left navigation remains, but the Team product area uses Team Mode structure.
+- Forge Harness ConsoleShell left navigation remains, but the Team product area uses Team Mode structure.
 - Internal left rail lists teams and has a compact create entry.
 - Main surface begins with compact agent tabs, not a dashboard.
 - Tabs show Leader and teammates, status, unread/task/approval badges, rename, remove, and drag

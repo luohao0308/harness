@@ -8,10 +8,10 @@ export const RENDERER_HOST = 'renderer'
 export const PACKAGED_RENDERER_URL = `${RENDERER_SCHEME}://${RENDERER_HOST}/index.html`
 const RECOVERY_HTML = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Harness Desktop Recovery</title></head>
+<title>Forge Harness Desktop Recovery</title></head>
 <body style="margin:0;font:14px system-ui;background:#f8fafc;color:#0f172a;display:grid;min-height:100vh;place-items:center">
-<main style="max-width:440px;padding:24px"><h1 style="font-size:18px">Harness Desktop could not load</h1>
-<p style="line-height:1.6;color:#475569">The packaged recovery files are unavailable. Restart Harness Desktop or reinstall the application.</p></main>
+<main style="max-width:440px;padding:24px"><h1 style="font-size:18px">Forge Harness Desktop could not load</h1>
+<p style="line-height:1.6;color:#475569">The packaged recovery files are unavailable. Restart Forge Harness Desktop or reinstall the application.</p></main>
 </body></html>`
 
 export function registerRendererSchemePrivileges(): void {

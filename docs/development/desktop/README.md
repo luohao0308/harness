@@ -1,8 +1,8 @@
-# Harness Desktop Production Guide
+# Forge Harness Desktop Production Guide
 
 ## Status
 
-Harness Desktop is the Electron shell for the AI Harness Platform:
+Forge Harness Desktop is the Electron shell for Forge Harness:
 
 ```text
 Model + Harness = Agent
@@ -50,6 +50,7 @@ The desktop first screen must answer:
 | Profile isolation | Separate API base URL, auth token, and data path per workspace/account | `desktopApi.profile`, `phase6-store`, shared API resolver | Save, switch, and broadcast `profile:changed` |
 | Independent Run windows | Review Runs without losing the main workbench | `desktopApi.window`, `window-manager` | `openRun(runId)` opens/focuses persisted Run window |
 | Offline simple tasks | Keep useful local work available without network access | `desktopApi.offline`, `phase6-service` | Deterministic task completes; optional local model fails soft |
+| Complete offline Agent | Run an auditable local Agent with restricted workspace tools while disconnected | `desktopApi.offlineAgent`, `OfflineAgentRuntime`, Profile-scoped `offline-sync.sqlite` | Run state, model/tool/approval evidence, cancellation and recovery persist; reconnect imports one canonical evidence graph idempotently |
 | Local model settings | Use Ollama or OpenAI-compatible local endpoints | `desktopApi.localModel` | Settings round-trip; fallback output remains deterministic when unavailable |
 | File bridge | Root-scoped local file list/read/write/watch | `desktopApi.file`, `file-service` | Root selection is explicit; file operations stay under selected root |
 | System integration | Tray, close-to-tray, login startup, shortcut, native menu, notifications, deep links | `desktopApi.system`, `system-integration` | Route events normalize to console routes; notifications click through |
@@ -57,6 +58,27 @@ The desktop first screen must answer:
 | Feedback and metrics | Beta feedback, startup timing, crash and sync health | `desktopApi.feedback`, desktop telemetry endpoints, Sentry | Feedback submits; metric summary reports startup/crash/sync evidence |
 | Startup performance | Keep packaged launch latency within explicit phase and total budgets | `startup-performance`, `check-startup-budget.mjs`, Release matrix | Five isolated packaged samples produce P50/P95 evidence; every P95 stays within budget |
 | Packaging | macOS, Windows, Linux release artifacts | `electron-builder.yml`, `.github/workflows/release.yml` | Local `--dir` package passes; CI signs/notarizes when secrets exist |
+
+### Complete Offline Agent Contract
+
+The complete offline Agent is available from the Desktop advanced-features
+surface and is separate from the retained deterministic simple-task fallback.
+Each Desktop Profile owns its runs and evidence in `offline-sync.sqlite`.
+Restart recovery marks unfinished work as interrupted, while cancellation,
+approval decisions, resume, and terminal results remain durable.
+
+The first restricted tool set is intentionally small:
+
+- `workspace.list_files` and `workspace.read_text` are root-confined read tools.
+- `workspace.write_text` is high risk and always waits for explicit approval.
+- Tool requests enter through typed preload IPC. Model text and tool output are
+  untrusted content and are never parsed into executable tool requests.
+
+Terminal snapshots enter the existing offline queue as `offline_agent_run`.
+After reconnect, the API imports their stable UUIDs into the canonical Task,
+AgentRun, AgentEvent, ModelCall, ToolCall, and ToolApproval graph. Replays are
+idempotent; malformed snapshots become visible sync conflicts instead of being
+silently acknowledged.
 
 ## Local Startup
 
@@ -176,7 +198,12 @@ report came from a packaged executable matching the host platform and
 architecture, and fails when any phase P95 exceeds its budget. It writes
 `dist/startup-budget-report-<platform>-<arch>.json` with raw samples, P50/P95,
 budgets, and violations. Release CI uploads all three host reports alongside the
-installers and does not create the GitHub Release when a gate fails.
+installers, downloads each artifact into an isolated directory, and independently
+validates exact platform/architecture identity, one report per artifact, five
+samples, aggregate integrity, P95 pass state, and a shared app version. The
+resulting `desktop-startup-evidence.json` is retained with the GitHub Release;
+the release is not created when either the platform job or the independent
+evidence job fails.
 
 Controlled overrides are available for performance-lab or slower dedicated
 runners:
@@ -218,7 +245,8 @@ Before publishing a stable desktop release, CI must prove:
 - Windows `nsis` installers are Authenticode signed.
 - Linux `AppImage`, `deb`, and `rpm` launch on supported architectures.
 - macOS, Windows, and Linux startup reports are present and each packaged P95
-  gate passed on the release runner.
+  gate passed on the release runner; the independent evidence summary contains
+  exactly those three x64 identities with five samples each.
 - `latest*.yml` metadata and blockmaps match the GitHub Release assets.
 - Stable clients ignore beta metadata; beta clients can opt into prerelease
   updates.
@@ -276,6 +304,9 @@ Desktop must keep native trust boundaries visible:
   replicas; production must fail closed when Redis is unavailable.
 - Local model endpoints are optional. Failure to reach them must fall back to
   deterministic offline output without blocking the workbench.
+- Complete offline Agent tools remain allowlisted and root-scoped. File writes
+  always require an explicit local approval, and model output never gains tool
+  authority.
 
 ## Support Playbook
 

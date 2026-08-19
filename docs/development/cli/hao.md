@@ -150,7 +150,7 @@ hao --agent-id default --cwd . --mode confirm --target host
 
 TUI 现在采用本地 Agent CLI 的 inline 终端布局：`hao` 不再切到单独的全屏 alternate screen，而是在当前 shell 输出流里显示 `hao Code` 欢迎框、主会话、底部 `›` 输入提示和状态提示。欢迎框按本地 Agent CLI 的启动页结构排版，左侧是欢迎、图标、模型强度和当前目录，右侧是 Tips 和 What's new。底部状态会显示当前模型、推导出的强度标签、compact 圆环、输出风格、审批数和命令数。工具、diff、文件树、审批、命令、计划、输出、todo 和验证视图不再常驻右侧分屏；只有输入 `/tools`、`/diff`、`/tasks`、`/view ...` 等命令时才会打开底部工作台 drawer。
 
-本地 Harness API 请求会忽略 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` 等环境代理配置，避免 `127.0.0.1` 服务被 SOCKS 代理环境变量污染。
+本地 Forge Harness API 请求会忽略 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` 等环境代理配置，避免 `127.0.0.1` 服务被 SOCKS 代理环境变量污染。
 
 常用 slash commands：
 

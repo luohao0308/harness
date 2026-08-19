@@ -222,6 +222,29 @@ describe('Preload Script - Extended Coverage', () => {
     )
   })
 
+  test('exposes complete offline Agent run lifecycle methods', async () => {
+    vi.resetModules()
+    await import('../preload')
+    const api = mockContextBridge.exposeInMainWorld.mock.calls[0]?.[1]!
+    const input = { prompt: 'offline run', toolRequest: null }
+
+    mockIpcRenderer.invoke.mockResolvedValue({ id: 'run-1', status: 'COMPLETED' })
+    await api.offlineAgent.run(input)
+    expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('offline-agent:run', input)
+    await api.offlineAgent.listRuns(20)
+    expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('offline-agent:list-runs', 20)
+    await api.offlineAgent.getRun('run-1')
+    expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('offline-agent:get-run', 'run-1')
+    await api.offlineAgent.cancel('run-1')
+    expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('offline-agent:cancel', 'run-1')
+    await api.offlineAgent.resume('run-1')
+    expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('offline-agent:resume', 'run-1')
+    await api.offlineAgent.decideApproval('approval-1', true)
+    expect(mockIpcRenderer.invoke).toHaveBeenCalledWith(
+      'offline-agent:decide-approval', 'approval-1', true,
+    )
+  })
+
   test('should expose sync runtime methods and status listener', async () => {
     vi.resetModules()
     await import('../preload')
@@ -230,6 +253,10 @@ describe('Preload Script - Extended Coverage', () => {
     mockIpcRenderer.invoke.mockResolvedValue({ state: 'idle' })
     await api.sync.getStatus()
     expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('sync:get-status')
+    mockIpcRenderer.invoke.mockResolvedValue({ tasks: [], serverConflicts: [] })
+    await expect(api.sync.getConflicts()).resolves.toEqual({ tasks: [], serverConflicts: [] })
+    expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('sync:get-conflicts')
+    mockIpcRenderer.invoke.mockResolvedValue({ state: 'idle' })
     await api.sync.runNow()
     expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('sync:run-now')
 
@@ -337,6 +364,10 @@ describe('Preload Script - Extended Coverage', () => {
     await api.file.selectWorkspaceRoot()
     expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('file:select-workspace-root')
 
+    mockIpcRenderer.invoke.mockResolvedValue({ authorization: 'hwa1_token.signature', label: 'workspace' })
+    await api.file.selectAuthorizedWorkspaceRoot()
+    expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('file:select-authorized-workspace-root')
+
     mockIpcRenderer.invoke.mockResolvedValue('/workspace')
     await api.file.getWorkspaceRoot()
     expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('file:get-workspace-root')
@@ -357,6 +388,12 @@ describe('Preload Script - Extended Coverage', () => {
     await api.file.listFiles('/workspace')
     expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('file:list-files', '/workspace')
 
+    mockIpcRenderer.invoke.mockResolvedValue({ files: [], complete: true })
+    await api.file.scanProjectKnowledge({ ignorePatterns: ['dist/**'] })
+    expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('file:scan-project-knowledge', {
+      ignorePatterns: ['dist/**'],
+    })
+
     mockIpcRenderer.invoke.mockResolvedValue({ content: 'file content' })
     await api.file.readFile('/workspace/file.txt')
     expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('file:read-file', '/workspace/file.txt')
@@ -364,6 +401,30 @@ describe('Preload Script - Extended Coverage', () => {
     mockIpcRenderer.invoke.mockResolvedValue(undefined)
     await api.file.writeFile('/workspace/file.txt', 'new content')
     expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('file:write-file', '/workspace/file.txt', 'new content')
+  })
+
+  test('exposes fixed change review status, diff, and mutation channels', async () => {
+    vi.resetModules()
+    await import('../preload')
+    const api = mockContextBridge.exposeInMainWorld.mock.calls[0]?.[1]
+    const mutation = {
+      action: 'stage',
+      previewToken: 'preview-1',
+      hunkIds: ['worktree:0'],
+      auditContext: { runId: 'run-1' },
+    }
+
+    mockIpcRenderer.invoke.mockResolvedValue({ state: 'ready', files: [] })
+    await api.changeReview.getStatus()
+    expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('change-review:get-status')
+
+    mockIpcRenderer.invoke.mockResolvedValue({ path: 'src/app.ts', sections: [] })
+    await api.changeReview.getDiff('src/app.ts')
+    expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('change-review:get-diff', 'src/app.ts')
+
+    mockIpcRenderer.invoke.mockResolvedValue({ action: 'stage', status: 'completed' })
+    await api.changeReview.mutate(mutation)
+    expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('change-review:mutate', mutation)
   })
 
   test('exposes synchronous workspace-only persistence IPC', async () => {

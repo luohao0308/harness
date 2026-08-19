@@ -643,25 +643,39 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                   <div className="space-y-2">
                     <div className="text-xs font-medium text-slate-700">引用</div>
                     <div className="space-y-2">
-                      {grounding.citations.map((citation) => (
-                        <div key={citation.id} className="rounded-md border border-slate-100 bg-white p-2 text-xs">
-                          <div className="flex items-center justify-between gap-2">
-                            <Badge tone="info">{citation.citation_key}</Badge>
-                            <span className="font-mono text-[11px] text-slate-500">
-                              {runDetailValueLabel(citation.source_kind)}
-                            </span>
+                      {grounding.citations.map((citation) => {
+                        const projectEvidence = projectCitationEvidence(citation.metadata_json);
+                        return (
+                          <div key={citation.id} className="rounded-md border border-slate-100 bg-white p-2 text-xs">
+                            <div className="flex items-center justify-between gap-2">
+                              <Badge tone="info">{citation.citation_key}</Badge>
+                              <span className="font-mono text-[11px] text-slate-500">
+                                {runDetailValueLabel(citation.source_kind)}
+                              </span>
+                            </div>
+                            <div className="mt-1 text-slate-600">
+                              命中: {citation.retrieval_hit_id}
+                            </div>
+                            <div className="mt-1 text-slate-500">
+                              {citation.web_source_id
+                                ? webSourcesById.get(citation.web_source_id)?.title ??
+                                  citation.web_source_id
+                                : hitsById.get(citation.retrieval_hit_id)?.snippet ?? citation.chunk_id}
+                            </div>
+                            {projectEvidence ? (
+                              <div className="mt-2 space-y-1 border-t border-slate-100 pt-2 font-mono text-[11px] text-slate-600">
+                                <div className="break-all">{projectEvidence.uri}</div>
+                                {projectEvidence.sha256 ? (
+                                  <div className="break-all">sha256:{projectEvidence.sha256}</div>
+                                ) : null}
+                                {projectEvidence.documentVersion ? (
+                                  <div>document-version:{projectEvidence.documentVersion}</div>
+                                ) : null}
+                              </div>
+                            ) : null}
                           </div>
-                          <div className="mt-1 text-slate-600">
-                            命中: {citation.retrieval_hit_id}
-                          </div>
-                          <div className="mt-1 text-slate-500">
-                            {citation.web_source_id
-                              ? webSourcesById.get(citation.web_source_id)?.title ??
-                                citation.web_source_id
-                              : hitsById.get(citation.retrieval_hit_id)?.snippet ?? citation.chunk_id}
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -1484,6 +1498,47 @@ function adapterSnapshot(call: ToolCall): { slug: string; sha: string } | null {
 
 export function shortCapability(value?: string | null) {
   return value ? value.slice(0, 18) : "未提供";
+}
+
+export function projectCitationEvidence(metadata: Record<string, unknown>): {
+  uri: string;
+  sha256: string | null;
+  documentVersion: number | null;
+} | null {
+  const snapshot = metadata.source_snapshot;
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return null;
+  const source = snapshot as Record<string, unknown>;
+  const uri = safeProjectUri(source.project_uri, source.project_relative_path);
+  if (!uri) return null;
+  const sha256 = typeof source.project_file_sha256 === "string"
+    && /^[0-9a-f]{64}$/i.test(source.project_file_sha256)
+    ? source.project_file_sha256.toLowerCase()
+    : null;
+  const documentVersion = typeof source.document_version === "number"
+    && Number.isInteger(source.document_version)
+    && source.document_version > 0
+    ? source.document_version
+    : null;
+  return { uri, sha256, documentVersion };
+}
+
+function safeProjectUri(uriValue: unknown, pathValue: unknown): string | null {
+  const candidate = typeof uriValue === "string"
+    ? uriValue
+    : typeof pathValue === "string"
+      ? `project://${pathValue}`
+      : "";
+  if (!candidate.startsWith("project://")) return null;
+  const relativePath = candidate.slice("project://".length);
+  if (
+    !relativePath
+    || relativePath.startsWith("/")
+    || relativePath.includes("\\")
+    || relativePath.split("/").some((segment) => segment === "..")
+  ) {
+    return null;
+  }
+  return `project://${relativePath}`;
 }
 
 export function toolOutputSummary(call: ToolCall): string {

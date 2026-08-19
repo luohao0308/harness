@@ -2,15 +2,32 @@ import os
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.models import DeletedEntity, Task
+from app.db.models import (
+    AdminAuditEvent,
+    AgentEvent,
+    AgentRun,
+    DeletedEntity,
+    ModelCall,
+    Task,
+    Team,
+    TeamAgent,
+    TeamGoal,
+    TeamTask,
+    ToolApproval,
+    ToolCall,
+)
 from app.db.session import get_db_session
-from app.security.auth import Principal
+from app.events.event_store import EventStore
+from app.events.event_types import EventType
+from app.security.auth import Principal, require_role
 
 router = APIRouter(prefix="/desktop", tags=["desktop-sync"])
 
@@ -38,14 +55,99 @@ class DesktopSyncResponse(BaseModel):
     server_timestamp: str = Field(description="Current server timestamp in ISO format")
 
 
+class DesktopAttentionItem(BaseModel):
+    """Actionable server-owned item projected into the Desktop attention queue."""
+
+    id: str
+    category: Literal["approvals", "runs", "teams"]
+    kind: Literal[
+        "tool_approval",
+        "run_failed",
+        "run_cancelled",
+        "run_waiting",
+        "team_goal_blocked",
+        "team_agent_failed",
+        "team_task_blocked",
+    ]
+    severity: Literal["critical", "warning"]
+    title: str
+    description: str
+    status: str
+    occurred_at: datetime
+    target_path: str
+    task_id: str | None = None
+    team_id: str | None = None
+    approval_id: str | None = None
+    tool_name: str | None = None
+    risk_level: str | None = None
+    actions: list[Literal["approve", "reject", "open"]]
+
+
+class DesktopAttentionCounts(BaseModel):
+    total: int
+    approvals: int
+    runs: int
+    teams: int
+
+
+class DesktopAttentionResponse(BaseModel):
+    items: list[DesktopAttentionItem]
+    counts: DesktopAttentionCounts
+    generated_at: datetime
+    truncated: bool
+
+
+class DesktopChangeReviewAuditRequest(BaseModel):
+    operation_id: str = Field(min_length=1, max_length=128)
+    phase: Literal["requested", "completed", "failed"]
+    action: Literal["stage", "unstage", "revert"]
+    path: str = Field(min_length=1, max_length=4096)
+    hunk_ids: list[str] = Field(min_length=1, max_length=200)
+    preview_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    task_id: str | None = Field(default=None, max_length=128)
+    run_id: str | None = Field(default=None, max_length=128)
+    approval_id: str | None = Field(default=None, max_length=128)
+    error_code: str | None = Field(default=None, max_length=128)
+
+    @field_validator("path")
+    @classmethod
+    def validate_relative_path(cls, value: str) -> str:
+        parts = value.split("/")
+        if value.startswith(("/", "\\")) or "\\" in value or any(
+            part in {"", ".", ".."} for part in parts
+        ):
+            raise ValueError("path must be a normalized repository-relative path")
+        return value
+
+    @field_validator("hunk_ids")
+    @classmethod
+    def validate_hunk_ids(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value) or any(
+            re.fullmatch(r"(?:staged|worktree):\d+", hunk_id) is None
+            for hunk_id in value
+        ):
+            raise ValueError("hunk_ids must contain unique diff hunk identifiers")
+        return value
+
+
+class DesktopChangeReviewAuditResponse(BaseModel):
+    accepted: bool
+    audit_id: str
+    event_id: str | None = None
+    operation_id: str
+    phase: Literal["requested", "completed", "failed"]
+
+
 class SyncOperation(BaseModel):
     """A single operation to apply during sync."""
 
     type: Literal["create", "update", "delete"]
-    entity_type: Literal["task"]
+    entity_type: Literal["task", "offline_agent_run"]
     entity_id: str
     data: dict | None = None
     timestamp: str
+    operation_id: str | None = None
+    operation_id: str | None = None
 
 
 class SyncOperationsRequest(BaseModel):
@@ -61,6 +163,8 @@ class ConflictInfo(BaseModel):
     entity_type: str
     server_version: dict
     client_version: dict
+    operation_id: str | None = None
+    operation_id: str | None = None
 
 
 class SyncOperationsResponse(BaseModel):
@@ -258,7 +362,7 @@ def check_desktop_updates(
     arch: Annotated[str, Query(description="Electron process.arch value")] = "x64",
 ) -> DesktopUpdateCheckResponse:
     """
-    Check Harness Desktop update availability for stable or beta release channels.
+    Check Forge Harness Desktop update availability for stable or beta release channels.
 
     The desktop app still downloads signed artifacts from GitHub Releases through
     electron-updater metadata. This endpoint is the backend policy gate that
@@ -359,6 +463,409 @@ def _p95(values: list[float]) -> float | None:
     ordered = sorted(values)
     index = min(len(ordered) - 1, max(0, int(round((len(ordered) - 1) * 0.95))))
     return ordered[index]
+
+
+@router.get("/attention", response_model=DesktopAttentionResponse)
+def get_desktop_attention(
+    session: DbSession,
+    principal: Principal,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+) -> DesktopAttentionResponse:
+    """Return one bounded, organization-scoped projection of actionable Desktop work."""
+    organization_id = principal.organization_id
+    source_limit = max(limit * 2, 100)
+    can_decide_approvals = "admin" in principal.roles
+    items: list[DesktopAttentionItem] = []
+
+    approval_rows = session.execute(
+        select(ToolApproval, Task, ToolCall)
+        .join(Task, Task.id == ToolApproval.task_id)
+        .join(ToolCall, ToolCall.id == ToolApproval.tool_call_id)
+        .where(
+            ToolApproval.organization_id == organization_id,
+            ToolApproval.status == "PENDING",
+            Task.organization_id == organization_id,
+        )
+        .order_by(ToolApproval.created_at.desc(), ToolApproval.id.asc())
+        .limit(source_limit)
+    ).all()
+    approval_task_ids: set[str] = set()
+    for approval, task, tool_call in approval_rows:
+        approval_task_ids.add(task.id)
+        items.append(
+            DesktopAttentionItem(
+                id=f"approval:{approval.id}",
+                category="approvals",
+                kind="tool_approval",
+                severity=(
+                    "critical"
+                    if approval.risk_level.lower() in {"high", "critical"}
+                    else "warning"
+                ),
+                title=task.title,
+                description=approval.reason or f"{tool_call.tool_name} 需要审批",
+                status=approval.status,
+                occurred_at=_as_utc(approval.created_at),
+                target_path=f"/runs/{task.id}",
+                task_id=task.id,
+                approval_id=approval.id,
+                tool_name=tool_call.tool_name,
+                risk_level=approval.risk_level,
+                actions=(
+                    ["approve", "reject", "open"]
+                    if can_decide_approvals
+                    else ["open"]
+                ),
+            )
+        )
+
+    abnormal_tasks = list(
+        session.execute(
+            select(Task)
+            .where(
+                Task.organization_id == organization_id,
+                Task.status.in_(("FAILED", "CANCELLED", "WAITING_APPROVAL")),
+            )
+            .order_by(Task.updated_at.desc(), Task.id.asc())
+            .limit(source_limit)
+        ).scalars()
+    )
+    for task in abnormal_tasks:
+        if task.status == "WAITING_APPROVAL" and task.id in approval_task_ids:
+            continue
+        kind, severity, description = _run_attention_details(task.status)
+        items.append(
+            DesktopAttentionItem(
+                id=f"run:{task.id}",
+                category="runs",
+                kind=kind,
+                severity=severity,
+                title=task.title,
+                description=description,
+                status=task.status,
+                occurred_at=_as_utc(task.updated_at),
+                target_path=f"/runs/{task.id}",
+                task_id=task.id,
+                actions=["open"],
+            )
+        )
+
+    blocked_goals = session.execute(
+        select(TeamGoal, Team)
+        .join(Team, Team.id == TeamGoal.team_id)
+        .where(
+            TeamGoal.organization_id == organization_id,
+            TeamGoal.status == "blocked",
+            Team.organization_id == organization_id,
+        )
+        .order_by(TeamGoal.updated_at.desc(), TeamGoal.id.asc())
+        .limit(source_limit)
+    ).all()
+    for goal, team in blocked_goals:
+        items.append(
+            DesktopAttentionItem(
+                id=f"team-goal:{goal.id}",
+                category="teams",
+                kind="team_goal_blocked",
+                severity="critical",
+                title=team.name,
+                description="目标被阻塞",
+                status=goal.status,
+                occurred_at=_as_utc(goal.updated_at),
+                target_path=f"/teams/{team.id}",
+                team_id=team.id,
+                actions=["open"],
+            )
+        )
+
+    failed_agents = session.execute(
+        select(TeamAgent, Team)
+        .join(Team, Team.id == TeamAgent.team_id)
+        .where(
+            TeamAgent.organization_id == organization_id,
+            TeamAgent.status == "failed",
+            Team.organization_id == organization_id,
+        )
+        .order_by(TeamAgent.updated_at.desc(), TeamAgent.id.asc())
+        .limit(source_limit)
+    ).all()
+    for agent, team in failed_agents:
+        items.append(
+            DesktopAttentionItem(
+                id=f"team-agent:{agent.id}",
+                category="teams",
+                kind="team_agent_failed",
+                severity="critical",
+                title=team.name,
+                description=f"成员 {agent.agent_name} 执行失败",
+                status=agent.status,
+                occurred_at=_as_utc(agent.updated_at),
+                target_path=f"/teams/{team.id}",
+                team_id=team.id,
+                actions=["open"],
+            )
+        )
+
+    team_task_rows = session.execute(
+        select(TeamTask, Team)
+        .join(Team, Team.id == TeamTask.team_id)
+        .where(
+            TeamTask.organization_id == organization_id,
+            TeamTask.status.in_(("pending", "in_progress")),
+            Team.organization_id == organization_id,
+        )
+        .order_by(TeamTask.updated_at.desc(), TeamTask.id.asc())
+        .limit(source_limit)
+    ).all()
+    for team_task, team in team_task_rows:
+        if not team_task.blocked_by_json:
+            continue
+        items.append(
+            DesktopAttentionItem(
+                id=f"team-task:{team_task.id}",
+                category="teams",
+                kind="team_task_blocked",
+                severity="warning",
+                title=team.name,
+                description=f"任务“{team_task.subject}”存在未解决依赖",
+                status="blocked",
+                occurred_at=_as_utc(team_task.updated_at),
+                target_path=f"/teams/{team.id}",
+                team_id=team.id,
+                actions=["open"],
+            )
+        )
+
+    items.sort(key=_attention_sort_key)
+    counts = DesktopAttentionCounts(
+        total=len(items),
+        approvals=sum(item.category == "approvals" for item in items),
+        runs=sum(item.category == "runs" for item in items),
+        teams=sum(item.category == "teams" for item in items),
+    )
+    return DesktopAttentionResponse(
+        items=items[:limit],
+        counts=counts,
+        generated_at=datetime.now(UTC),
+        truncated=len(items) > limit,
+    )
+
+
+def _run_attention_details(
+    status: str,
+) -> tuple[
+    Literal["run_failed", "run_cancelled", "run_waiting"],
+    Literal["critical", "warning"],
+    str,
+]:
+    if status == "FAILED":
+        return "run_failed", "critical", "运行失败，需要检查"
+    if status == "CANCELLED":
+        return "run_cancelled", "warning", "运行已取消，请确认是否需要重试"
+    return "run_waiting", "warning", "运行正在等待人工处理"
+
+
+def _attention_sort_key(item: DesktopAttentionItem) -> tuple[int, float, str]:
+    occurred_at = _as_utc(item.occurred_at)
+    severity_rank = 0 if item.severity == "critical" else 1
+    return severity_rank, -occurred_at.timestamp(), item.id
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+@router.post(
+    "/change-review/audit",
+    response_model=DesktopChangeReviewAuditResponse,
+)
+def record_desktop_change_review_audit(
+    request: DesktopChangeReviewAuditRequest,
+    session: DbSession,
+    principal: Principal,
+) -> DesktopChangeReviewAuditResponse:
+    """Persist an organization-scoped audit record for a local Git mutation phase."""
+    require_role(principal, {"admin", "engineer"})
+    task, approval = _resolve_change_review_references(
+        session=session,
+        principal=principal,
+        request=request,
+    )
+    audit_action = f"desktop.change_review.{request.phase}"
+    operation_audits = list(
+        session.execute(
+            select(AdminAuditEvent)
+            .where(
+                AdminAuditEvent.organization_id == principal.organization_id,
+                AdminAuditEvent.event_type
+                == EventType.DESKTOP_CHANGE_REVIEW_AUDITED.value,
+                AdminAuditEvent.resource_type == "desktop_change_review",
+                AdminAuditEvent.resource_id == request.operation_id,
+            )
+            .order_by(AdminAuditEvent.created_at.asc(), AdminAuditEvent.id.asc())
+        ).scalars()
+    )
+    identity = {
+        "action": request.action,
+        "path": request.path,
+        "hunk_ids": request.hunk_ids,
+        "preview_sha256": request.preview_sha256,
+        "task_id": task.id if task is not None else None,
+        "run_id": request.run_id,
+        "approval_id": approval.id if approval is not None else None,
+    }
+    identity_fields = tuple(identity)
+    for operation_audit in operation_audits:
+        persisted_identity = {
+            field: operation_audit.payload_json.get(field) for field in identity_fields
+        }
+        if persisted_identity != identity:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Change review operation identity does not match",
+            )
+
+    existing = next(
+        (audit for audit in operation_audits if audit.action == audit_action),
+        None,
+    )
+    if existing is not None:
+        return DesktopChangeReviewAuditResponse(
+            accepted=True,
+            audit_id=existing.id,
+            event_id=existing.payload_json.get("event_id"),
+            operation_id=request.operation_id,
+            phase=request.phase,
+        )
+
+    payload = request.model_dump(exclude_none=True)
+    event_id: str | None = None
+    if task is not None:
+        event = EventStore(session).append(
+            task_id=task.id,
+            event_type=EventType.DESKTOP_CHANGE_REVIEW_AUDITED,
+            payload_json=payload,
+            actor_type="user",
+            actor_id=principal.user_id,
+        )
+        event_id = event.id
+
+    audit_payload = {
+        **payload,
+        "task_id": task.id if task is not None else None,
+        "run_id": request.run_id,
+        "approval_id": approval.id if approval is not None else None,
+        "event_id": event_id,
+    }
+    audit = AdminAuditEvent(
+        organization_id=principal.organization_id,
+        actor_id=principal.user_id,
+        event_type=EventType.DESKTOP_CHANGE_REVIEW_AUDITED.value,
+        resource_type="desktop_change_review",
+        resource_id=request.operation_id,
+        action=audit_action,
+        payload_json=audit_payload,
+    )
+    session.add(audit)
+    try:
+        session.commit()
+    except IntegrityError as error:
+        session.rollback()
+        existing = session.execute(
+            select(AdminAuditEvent).where(
+                AdminAuditEvent.organization_id == principal.organization_id,
+                AdminAuditEvent.event_type == EventType.DESKTOP_CHANGE_REVIEW_AUDITED.value,
+                AdminAuditEvent.resource_type == "desktop_change_review",
+                AdminAuditEvent.resource_id == request.operation_id,
+                AdminAuditEvent.action == audit_action,
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            raise error
+        persisted_identity = {
+            field: existing.payload_json.get(field) for field in identity_fields
+        }
+        if persisted_identity != identity:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Change review operation identity does not match",
+            ) from error
+        return DesktopChangeReviewAuditResponse(
+            accepted=True,
+            audit_id=existing.id,
+            event_id=existing.payload_json.get("event_id"),
+            operation_id=request.operation_id,
+            phase=request.phase,
+        )
+    session.refresh(audit)
+    return DesktopChangeReviewAuditResponse(
+        accepted=True,
+        audit_id=audit.id,
+        event_id=event_id,
+        operation_id=request.operation_id,
+        phase=request.phase,
+    )
+
+
+def _resolve_change_review_references(
+    *,
+    session: Session,
+    principal: Principal,
+    request: DesktopChangeReviewAuditRequest,
+) -> tuple[Task | None, ToolApproval | None]:
+    task: Task | None = None
+    approval: ToolApproval | None = None
+
+    if request.task_id is not None:
+        task = session.execute(
+            select(Task).where(
+                Task.id == request.task_id,
+                Task.organization_id == principal.organization_id,
+            )
+        ).scalar_one_or_none()
+        if task is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    if request.run_id is not None:
+        run_task = session.execute(
+            select(Task).where(
+                Task.id == request.run_id,
+                Task.organization_id == principal.organization_id,
+            )
+        ).scalar_one_or_none()
+        if run_task is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+        if task is not None and task.id != run_task.id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Run does not belong to task",
+            )
+        task = task or run_task
+
+    if request.approval_id is not None:
+        approval_row = session.execute(
+            select(ToolApproval, Task)
+            .join(Task, Task.id == ToolApproval.task_id)
+            .where(
+                ToolApproval.id == request.approval_id,
+                ToolApproval.organization_id == principal.organization_id,
+                Task.organization_id == principal.organization_id,
+            )
+        ).one_or_none()
+        if approval_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Approval not found",
+            )
+        approval, approval_task = approval_row
+        if task is not None and task.id != approval.task_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Approval does not belong to task",
+            )
+        task = task or approval_task
+
+    return task, approval
 
 
 @router.get("/sync", response_model=DesktopSyncResponse)
@@ -564,6 +1071,26 @@ def apply_sync_operations(
             # Skip operations with invalid timestamps
             continue
 
+        if operation.entity_type == "offline_agent_run":
+            if operation.type not in {"create", "update"} or not operation.data:
+                continue
+            if _apply_offline_agent_run(
+                session=session,
+                operation=operation,
+                principal=principal,
+                operation_timestamp=operation_timestamp,
+            ):
+                applied_count += 1
+            else:
+                conflicts.append(ConflictInfo(
+                    entity_id=operation.entity_id,
+                    entity_type=operation.entity_type,
+                    server_version={},
+                    client_version=operation.data,
+                    operation_id=operation.operation_id,
+                ))
+            continue
+
         if operation.type == "create":
             # Create new task
             if not operation.data:
@@ -619,6 +1146,7 @@ def apply_sync_operations(
                             "updated_at": server_updated_at.isoformat(),
                         },
                         client_version=operation.data or {},
+                        operation_id=operation.operation_id,
                     )
                 )
                 continue
@@ -672,3 +1200,396 @@ def apply_sync_operations(
         applied=applied_count,
         conflicts=conflicts,
     )
+
+
+def _apply_offline_agent_run(
+    *,
+    session: Session,
+    operation: SyncOperation,
+    principal: Principal,
+    operation_timestamp: datetime,
+) -> bool:
+    """Import a terminal Desktop Run snapshot without duplicating evidence on retry."""
+    data = operation.data or {}
+    run = data.get("run")
+    events = data.get("events")
+    model_calls = data.get("modelCalls")
+    tool_calls = data.get("toolCalls")
+    approvals = data.get("approvals")
+    if not isinstance(run, dict) or run.get("id") != operation.entity_id:
+        return False
+    if not _is_uuid(operation.entity_id):
+        return False
+    if not isinstance(events, list) or not isinstance(model_calls, list):
+        return False
+    if not isinstance(tool_calls, list) or not isinstance(approvals, list):
+        return False
+
+    status = str(run.get("status", ""))
+    if status not in {"COMPLETED", "FAILED", "CANCELLED"}:
+        return False
+    prompt = str(run.get("prompt", "")).strip()
+    if not prompt or len(prompt) > 120_000:
+        return False
+    result = run.get("result")
+    if result is not None and (not isinstance(result, str) or len(result) > 500_000):
+        return False
+    sync_revision = _offline_sync_revision(run.get("syncRevision"))
+    if sync_revision is None:
+        return False
+    if not _offline_agent_snapshot_ownership_matches(
+        session=session,
+        run_id=operation.entity_id,
+        principal=principal,
+        events=events,
+        model_calls=model_calls,
+        tool_calls=tool_calls,
+        approvals=approvals,
+    ):
+        return False
+
+    task = session.get(Task, operation.entity_id)
+    if task is not None:
+        if (
+            task.created_by != principal.user_id
+            or task.organization_id != principal.organization_id
+        ):
+            return False
+        snapshot = task.capability_snapshot_json or {}
+        if snapshot.get("source") != "desktop-offline-agent":
+            return False
+        stored_revision = _offline_sync_revision(snapshot.get("sync_revision"))
+        if stored_revision is None:
+            return False
+        if sync_revision < stored_revision:
+            return False
+        if sync_revision == stored_revision:
+            return True
+        task.title = prompt[:120]
+        task.goal = _offline_agent_goal(prompt, result)
+        task.status = status
+        task.model_provider = str(run.get("modelProvider") or "desktop-offline")[:256]
+        task.model_name = str(run.get("modelName") or "deterministic-v1")[:256]
+        task.capability_snapshot_json = {
+            "source": "desktop-offline-agent",
+            "offline_run_id": operation.entity_id,
+            "sync_revision": sync_revision,
+        }
+        task.updated_at = operation_timestamp
+        task.completed_at = operation_timestamp
+    else:
+        task = Task(
+            id=operation.entity_id,
+            organization_id=principal.organization_id,
+            agent_id=None,
+            created_by=principal.user_id,
+            title=prompt[:120],
+            goal=_offline_agent_goal(prompt, result),
+            status=status,
+            model_provider=str(run.get("modelProvider") or "desktop-offline")[:256],
+            model_name=str(run.get("modelName") or "deterministic-v1")[:256],
+            max_runtime_seconds=3600,
+            max_subagents=0,
+            enable_sandbox=False,
+            enable_network=False,
+            capability_snapshot_json={
+                "source": "desktop-offline-agent",
+                "offline_run_id": operation.entity_id,
+                "sync_revision": sync_revision,
+            },
+            created_at=operation_timestamp,
+            updated_at=operation_timestamp,
+            completed_at=operation_timestamp,
+        )
+        session.add(task)
+        session.flush()
+
+    agent_run = session.get(AgentRun, operation.entity_id)
+    if agent_run is None:
+        agent_run = AgentRun(
+            id=operation.entity_id,
+            task_id=task.id,
+            agent_type="root",
+            status=status,
+            context_json={"source": "desktop-offline-agent"},
+            capability_snapshot_json={"source": "desktop-offline-agent"},
+            started_at=_parse_optional_timestamp(run.get("startedAt")) or operation_timestamp,
+            completed_at=_parse_optional_timestamp(run.get("completedAt")) or operation_timestamp,
+        )
+        session.add(agent_run)
+    else:
+        agent_run.status = status
+        agent_run.completed_at = (
+            _parse_optional_timestamp(run.get("completedAt")) or operation_timestamp
+        )
+
+    for event in events[:2_000]:
+        if not isinstance(event, dict):
+            continue
+        event_id = str(event.get("id", ""))
+        sequence = event.get("sequence")
+        event_type = str(event.get("eventType", ""))
+        if (
+            not _is_uuid(event_id)
+            or not isinstance(sequence, int)
+            or sequence < 1
+            or not event_type
+        ):
+            continue
+        existing = session.get(AgentEvent, event_id)
+        if existing is not None:
+            continue
+        sequence_existing = session.execute(
+            select(AgentEvent).where(
+                AgentEvent.task_id == task.id,
+                AgentEvent.sequence == sequence,
+            )
+        ).scalar_one_or_none()
+        if sequence_existing is not None:
+            continue
+        actor_type = str(event.get("actorType") or "system")
+        if actor_type not in {"system", "user"}:
+            actor_type = "system"
+        session.add(AgentEvent(
+            id=event_id,
+            task_id=task.id,
+            agent_run_id=agent_run.id,
+            sequence=sequence,
+            event_type=event_type[:128],
+            payload_json=event.get("payload") if isinstance(event.get("payload"), dict) else {},
+            actor_type=actor_type,
+            created_at=_parse_optional_timestamp(event.get("createdAt")) or operation_timestamp,
+        ))
+
+    for model_call in model_calls[:200]:
+        if not isinstance(model_call, dict):
+            continue
+        call_id = str(model_call.get("id", ""))
+        if not _is_uuid(call_id) or session.get(ModelCall, call_id) is not None:
+            continue
+        call_status = str(model_call.get("status") or "SUCCESS")
+        if call_status not in {"SUCCESS", "FAILED", "CANCELLED"}:
+            continue
+        session.add(ModelCall(
+            id=call_id,
+            task_id=task.id,
+            agent_run_id=agent_run.id,
+            model_provider=str(model_call.get("modelProvider") or "desktop-offline")[:256],
+            model_name=str(model_call.get("modelName") or "deterministic-v1")[:256],
+            status=call_status[:64],
+            duration_ms=_nonnegative_int(model_call.get("durationMs")),
+            prompt_tokens=0,
+            completion_tokens=0,
+            capability_snapshot_json={"source": "desktop-offline-agent"},
+            model_request_sha256=str(model_call.get("requestSha256") or "")[:64] or None,
+            model_request_hash_schema_version=2,
+            request_message_hashes_json=[],
+            hash_recomputability_status="offline_snapshot",
+            attempt_index=1,
+            terminal_status=call_status.lower(),
+            request_json={"source": "desktop-offline-agent"},
+            response_json=(
+                {"text": model_call.get("responseText")}
+                if model_call.get("responseText")
+                else {}
+            ),
+            error_message=(
+                str(model_call.get("errorMessage"))
+                if model_call.get("errorMessage")
+                else None
+            ),
+            created_at=(
+                _parse_optional_timestamp(model_call.get("createdAt"))
+                or operation_timestamp
+            ),
+        ))
+
+    tool_call_ids: set[str] = set()
+    for tool_call in tool_calls[:200]:
+        if not isinstance(tool_call, dict):
+            continue
+        call_id = str(tool_call.get("id", ""))
+        if not _is_uuid(call_id):
+            continue
+        tool_name = str(tool_call.get("toolName") or "")
+        if tool_name not in {
+            "workspace.list_files",
+            "workspace.read_text",
+            "workspace.write_text",
+        }:
+            continue
+        input_json = tool_call.get("input") if isinstance(tool_call.get("input"), dict) else {}
+        output_json = tool_call.get("output") if isinstance(tool_call.get("output"), dict) else {}
+        tool_status = str(tool_call.get("status") or "FAILED")
+        if tool_status not in {"PENDING", "RUNNING", "SUCCESS", "FAILED", "DENIED", "CANCELLED"}:
+            continue
+        risk_level = str(tool_call.get("riskLevel") or "LOW")
+        if risk_level not in {"LOW", "HIGH"}:
+            continue
+        tool_call_ids.add(call_id)
+        if session.get(ToolCall, call_id) is not None:
+            continue
+        session.add(ToolCall(
+            id=call_id,
+            task_id=task.id,
+            agent_run_id=agent_run.id,
+            tool_name=tool_name,
+            status=tool_status,
+            risk_level=risk_level,
+            capability_snapshot_json={"source": "desktop-offline-agent"},
+            requires_sandbox=False,
+            duration_ms=_nonnegative_int(tool_call.get("durationMs")),
+            input_json=input_json,
+            output_json=output_json,
+            error_message=(
+                str(tool_call.get("errorMessage"))
+                if tool_call.get("errorMessage")
+                else None
+            ),
+            created_at=_parse_optional_timestamp(tool_call.get("createdAt")) or operation_timestamp,
+        ))
+
+    for approval in approvals[:200]:
+        if not isinstance(approval, dict):
+            continue
+        approval_id = str(approval.get("id", ""))
+        tool_call_id = str(approval.get("toolCallId", ""))
+        if not _is_uuid(approval_id) or tool_call_id not in tool_call_ids:
+            continue
+        if session.get(ToolApproval, approval_id) is not None:
+            continue
+        approval_status = str(approval.get("status") or "PENDING")
+        if approval_status not in {"PENDING", "APPROVED", "REJECTED", "CANCELLED"}:
+            continue
+        session.add(ToolApproval(
+            id=approval_id,
+            task_id=task.id,
+            tool_call_id=tool_call_id,
+            organization_id=principal.organization_id,
+            requested_by=principal.user_id,
+            decided_by=principal.user_id if approval.get("status") != "PENDING" else None,
+            status=approval_status,
+            risk_level="HIGH",
+            reason=str(approval.get("reason") or "Desktop offline agent approval")[:500],
+            request_json=(
+                approval.get("request")
+                if isinstance(approval.get("request"), dict)
+                else {}
+            ),
+            decision_json=(
+                approval.get("decision")
+                if isinstance(approval.get("decision"), dict)
+                else {}
+            ),
+            created_at=_parse_optional_timestamp(approval.get("createdAt")) or operation_timestamp,
+            decided_at=_parse_optional_timestamp(approval.get("decidedAt")),
+        ))
+    return True
+
+
+def _offline_agent_snapshot_ownership_matches(
+    *,
+    session: Session,
+    run_id: str,
+    principal: Principal,
+    events: list,
+    model_calls: list,
+    tool_calls: list,
+    approvals: list,
+) -> bool:
+    """Reject an offline snapshot before writes if any UUID belongs to another graph."""
+    task = session.get(Task, run_id)
+    if task is not None and (
+        task.created_by != principal.user_id
+        or task.organization_id != principal.organization_id
+    ):
+        return False
+
+    agent_run = session.get(AgentRun, run_id)
+    if agent_run is not None and (
+        agent_run.task_id != run_id
+        or task is None
+        or task.organization_id != principal.organization_id
+    ):
+        return False
+
+    evidence_models = (
+        (events, AgentEvent),
+        (model_calls, ModelCall),
+        (tool_calls, ToolCall),
+    )
+    for evidence_items, model in evidence_models:
+        for item in evidence_items:
+            if not isinstance(item, dict):
+                continue
+            evidence_id = str(item.get("id", ""))
+            if not _is_uuid(evidence_id):
+                continue
+            existing = session.get(model, evidence_id)
+            if existing is not None and (
+                existing.task_id != run_id
+                or existing.agent_run_id != run_id
+                or task is None
+                or task.organization_id != principal.organization_id
+            ):
+                return False
+
+    for approval in approvals:
+        if not isinstance(approval, dict):
+            continue
+        approval_id = str(approval.get("id", ""))
+        if not _is_uuid(approval_id):
+            continue
+        existing = session.get(ToolApproval, approval_id)
+        if existing is None:
+            continue
+        expected_tool_call_id = str(approval.get("toolCallId", ""))
+        existing_tool_call = session.get(ToolCall, existing.tool_call_id)
+        if (
+            existing.task_id != run_id
+            or existing.organization_id != principal.organization_id
+            or existing.tool_call_id != expected_tool_call_id
+            or existing_tool_call is None
+            or existing_tool_call.task_id != run_id
+            or existing_tool_call.agent_run_id != run_id
+        ):
+            return False
+
+    return True
+
+
+def _offline_sync_revision(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _offline_agent_goal(prompt: str, result: object) -> str:
+    result_text = result if isinstance(result, str) else ""
+    return f"{prompt}\n\nDesktop offline result:\n{result_text}"[:600_000]
+
+
+def _parse_optional_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def _is_uuid(value: object) -> bool:
+    try:
+        return str(UUID(str(value))) == str(value).lower()
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
+def _nonnegative_int(value: object) -> int:
+    if isinstance(value, bool):
+        return 0
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError, OverflowError):
+        return 0

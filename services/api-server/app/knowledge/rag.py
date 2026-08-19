@@ -12,6 +12,7 @@ from .retrieval_events import *
 from .settings import *
 import app.knowledge as knowledge_api
 
+
 def _chunk_embedding_vector(embedding: KnowledgeEmbedding) -> list[float]:
     if isinstance(embedding.embedding_json, list) and embedding.embedding_json:
         return [float(value) for value in embedding.embedding_json]
@@ -21,6 +22,7 @@ def _chunk_embedding_vector(embedding: KnowledgeEmbedding) -> list[float]:
         except json.JSONDecodeError:
             return []
     return []
+
 
 def ground_query(
     session: Session,
@@ -90,9 +92,7 @@ def ground_query(
         query=query,
         capability=capability,
         research_provider=research_provider,
-        knowledge_snapshot_hash=_sha256(
-            f"{knowledge_snapshot_hash}:{connector_snapshot_hash}"
-        ),
+        knowledge_snapshot_hash=_sha256(f"{knowledge_snapshot_hash}:{connector_snapshot_hash}"),
     )
     cached = _rag_cache_lookup(
         session=session,
@@ -203,6 +203,9 @@ def ground_query(
         ):
             selected_chunk_ids.add(chunk.id)
             snippet_text = redacted_text_by_chunk_id.get(chunk.id, chunk.text)
+            document_metadata = (
+                document.metadata_json if isinstance(document.metadata_json, dict) else {}
+            )
             hit = RetrievalHit(
                 retrieval_session_id=retrieval_session.id,
                 chunk_id=chunk.id,
@@ -221,6 +224,10 @@ def ground_query(
                     "chunk_version": chunk.chunk_version,
                     "document_title_snapshot": document.title,
                     "document_content_sha256": document.content_sha256,
+                    "project_uri": document_metadata.get("project_uri"),
+                    "project_relative_path": document_metadata.get("relative_path"),
+                    "project_file_sha256": document_metadata.get("file_content_sha256"),
+                    "project_index_id": document_metadata.get("project_index_id"),
                     "chunk_text_sha256": chunk.text_sha256,
                     "snippet_sha256": _sha256(snippet_text[:400]),
                     "chunk_span": {
@@ -269,6 +276,10 @@ def ground_query(
                         "document_version": hit.document_version,
                         "document_title_snapshot": hit_metadata.get("document_title_snapshot"),
                         "document_content_sha256": hit_metadata.get("document_content_sha256"),
+                        "project_uri": hit_metadata.get("project_uri"),
+                        "project_relative_path": hit_metadata.get("project_relative_path"),
+                        "project_file_sha256": hit_metadata.get("project_file_sha256"),
+                        "project_index_id": hit_metadata.get("project_index_id"),
                         "chunk_id": hit.chunk_id,
                         "chunk_version": hit_metadata.get("chunk_version"),
                         "chunk_text_sha256": hit_metadata.get("chunk_text_sha256"),
@@ -546,5 +557,6 @@ def ground_query(
         evidence_summary=evidence_summary,
         evidence_message=evidence_message,
     )
+
 
 __all__ = [name for name in globals() if not name.startswith("__") and name != "annotations"]

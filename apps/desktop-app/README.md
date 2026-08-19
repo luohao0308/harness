@@ -1,6 +1,6 @@
-# Harness Desktop App
+# Forge Harness Desktop App
 
-Electron desktop shell for the AI Harness Platform. Product, design, release,
+Electron desktop shell for Forge Harness. Product, design, release,
 and support guidance lives in:
 
 - `docs/development/desktop/README.md`
@@ -62,7 +62,10 @@ npm run check:startup-budget
 
 The packaged startup gate writes
 `dist/startup-budget-report-<platform>-<arch>.json`. It requires a desktop
-session; Linux CI runs it through Xvfb.
+session; Linux CI runs it through Xvfb. Release CI downloads the three platform
+artifacts into separate directories, validates them again with
+`scripts/validate-startup-budget-artifacts.mjs`, and publishes one
+`desktop-startup-evidence.json` summary before GitHub Release creation.
 
 The full production desktop matrix is documented in
 `docs/development/desktop/README.md#verification-matrix`.
@@ -83,6 +86,8 @@ The full production desktop matrix is documented in
   budgets, report schema, and smoke-mode detection.
 - `scripts/check-startup-budget.mjs`: isolated packaged startup samples and
   P50/P95 release gate.
+- `scripts/validate-startup-budget-artifacts.mjs`: cross-platform artifact
+  identity, sample-count, aggregate-integrity, and P95 release gate.
 
 ## Local Pitfalls
 

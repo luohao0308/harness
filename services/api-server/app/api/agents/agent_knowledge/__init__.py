@@ -3,5 +3,6 @@
 # ruff: noqa: F401,F403
 from ._crud import *
 from ._documents import *
+from ._project_indexes import *
 
 __all__ = [name for name in globals() if not name.startswith("__") and name != "annotations"]

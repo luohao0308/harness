@@ -57,7 +57,7 @@ export class SQLiteConflictResolver implements ConflictResolver {
     for (const key of Object.keys(server)) {
       const field = key as keyof Task
       if (!conflicts.some(c => c.field === field) && !METADATA_FIELDS.has(field)) {
-        merged[field] = server[field]
+        assignTaskField(merged, field, server[field])
       }
     }
 
@@ -142,4 +142,12 @@ export class SQLiteConflictResolver implements ConflictResolver {
     // Text fields with different values require user decision
     return false
   }
+}
+
+function assignTaskField<K extends keyof Task>(
+  target: Partial<Task>,
+  field: K,
+  value: Task[K] | undefined,
+): void {
+  target[field] = value
 }

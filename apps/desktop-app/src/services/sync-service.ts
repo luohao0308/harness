@@ -43,6 +43,7 @@ export type SyncPushConflict = {
   entity_type: string
   server_version: Record<string, unknown>
   client_version: Record<string, unknown>
+  operation_id?: string
 }
 
 export type SyncPushResult = {

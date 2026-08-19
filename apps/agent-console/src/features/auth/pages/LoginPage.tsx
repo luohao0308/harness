@@ -77,7 +77,7 @@ export function LoginPage() {
           <div className="flex h-9 w-9 items-center justify-center rounded-md bg-slate-900 text-white">
             <LogIn className="h-4 w-4" />
           </div>
-          <h1 className="mt-3 text-lg font-semibold text-slate-950">登录 Harness Console</h1>
+          <h1 className="mt-3 text-lg font-semibold text-slate-950">登录 Forge Harness Console</h1>
           <p className="mt-1 text-sm text-slate-500">使用团队账号进入工作区。</p>
         </div>
         <form className="space-y-3" onSubmit={submit}>

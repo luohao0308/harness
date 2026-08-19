@@ -12,7 +12,7 @@ Offline-first Agent task control.
 
 Harness Mobile helps teams operate AI Harness Agent tasks from Android devices. Users can refresh task status, create tasks, mark tasks complete, receive run notifications, and keep working when connectivity is poor.
 
-The app reuses the Harness Desktop synchronization contract. Changes are stored locally first, queued for upload, and reconciled with the backend when the device reconnects. Conflict and pending-sync states are visible in the task list.
+The app reuses the Forge Harness Desktop synchronization contract. Changes are stored locally first, queued for upload, and reconciled with the backend when the device reconnects. Conflict and pending-sync states are visible in the task list.
 
 ## Internal Testing Instructions
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This design covers four interconnected feature areas that advance the AI Harness Platform from single-step execution to full multi-step DAG execution with eval regression, broader e2e coverage, and improved workspace context management.
+This design covers four interconnected feature areas that advance Forge Harness from single-step execution to full multi-step DAG execution with eval regression, broader e2e coverage, and improved workspace context management.
 
 ## Architecture
 

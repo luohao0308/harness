@@ -2454,6 +2454,11 @@
       },
       "AgentTriggerCreateRequest": {
         "properties": {
+          "config_json": {
+            "additionalProperties": true,
+            "title": "Config Json",
+            "type": "object"
+          },
           "enabled": {
             "default": true,
             "description": "Whether trigger starts enabled",
@@ -2473,10 +2478,27 @@
             "description": "Optional path",
             "title": "Endpoint Path"
           },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
           "type": {
-            "const": "webhook",
             "default": "webhook",
             "description": "Trigger type",
+            "enum": [
+              "webhook",
+              "schedule",
+              "file",
+              "git"
+            ],
             "title": "Type",
             "type": "string"
           }
@@ -2487,9 +2509,16 @@
       "AgentTriggerCreateResponse": {
         "properties": {
           "secret": {
-            "description": "Plaintext secret shown once",
-            "title": "Secret",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Webhook secret shown once",
+            "title": "Secret"
           },
           "trigger": {
             "$ref": "#/components/schemas/AgentTriggerResponse",
@@ -2497,8 +2526,7 @@
           }
         },
         "required": [
-          "trigger",
-          "secret"
+          "trigger"
         ],
         "title": "AgentTriggerCreateResponse",
         "type": "object"
@@ -2527,11 +2555,29 @@
             "title": "Agent Id",
             "type": "string"
           },
+          "config_json": {
+            "additionalProperties": true,
+            "title": "Config Json",
+            "type": "object"
+          },
           "created_at": {
             "description": "Created time",
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Soft deletion time",
+            "title": "Deleted At"
           },
           "enabled": {
             "description": "Whether trigger is enabled",
@@ -2539,9 +2585,16 @@
             "type": "boolean"
           },
           "endpoint_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "description": "Public webhook endpoint path",
-            "title": "Endpoint Path",
-            "type": "string"
+            "title": "Endpoint Path"
           },
           "id": {
             "description": "Trigger ID",
@@ -2561,9 +2614,20 @@
             "description": "Last successful trigger",
             "title": "Last Triggered At"
           },
+          "name": {
+            "default": "",
+            "description": "Trigger display name",
+            "title": "Name",
+            "type": "string"
+          },
           "type": {
-            "const": "webhook",
             "description": "Trigger type",
+            "enum": [
+              "webhook",
+              "schedule",
+              "file",
+              "git"
+            ],
             "title": "Type",
             "type": "string"
           },
@@ -2578,7 +2642,6 @@
           "id",
           "agent_id",
           "type",
-          "endpoint_path",
           "enabled",
           "created_at",
           "updated_at"
@@ -2588,6 +2651,18 @@
       },
       "AgentTriggerUpdateRequest": {
         "properties": {
+          "config_json": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Json"
+          },
           "enabled": {
             "anyOf": [
               {
@@ -2599,6 +2674,19 @@
             ],
             "description": "Whether trigger is enabled",
             "title": "Enabled"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
           }
         },
         "title": "AgentTriggerUpdateRequest",
@@ -5572,6 +5660,17 @@
             "title": "Entity Type",
             "type": "string"
           },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Id"
+          },
           "server_version": {
             "additionalProperties": true,
             "title": "Server Version",
@@ -6295,6 +6394,356 @@
           "confirm_token"
         ],
         "title": "DemoResetRequest",
+        "type": "object"
+      },
+      "DesktopAttentionCounts": {
+        "properties": {
+          "approvals": {
+            "title": "Approvals",
+            "type": "integer"
+          },
+          "runs": {
+            "title": "Runs",
+            "type": "integer"
+          },
+          "teams": {
+            "title": "Teams",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "approvals",
+          "runs",
+          "teams"
+        ],
+        "title": "DesktopAttentionCounts",
+        "type": "object"
+      },
+      "DesktopAttentionItem": {
+        "description": "Actionable server-owned item projected into the Desktop attention queue.",
+        "properties": {
+          "actions": {
+            "items": {
+              "enum": [
+                "approve",
+                "reject",
+                "open"
+              ],
+              "type": "string"
+            },
+            "title": "Actions",
+            "type": "array"
+          },
+          "approval_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Id"
+          },
+          "category": {
+            "enum": [
+              "approvals",
+              "runs",
+              "teams"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "tool_approval",
+              "run_failed",
+              "run_cancelled",
+              "run_waiting",
+              "team_goal_blocked",
+              "team_agent_failed",
+              "team_task_blocked"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "risk_level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Level"
+          },
+          "severity": {
+            "enum": [
+              "critical",
+              "warning"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "target_path": {
+            "title": "Target Path",
+            "type": "string"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "team_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Id"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tool_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Name"
+          }
+        },
+        "required": [
+          "id",
+          "category",
+          "kind",
+          "severity",
+          "title",
+          "description",
+          "status",
+          "occurred_at",
+          "target_path",
+          "actions"
+        ],
+        "title": "DesktopAttentionItem",
+        "type": "object"
+      },
+      "DesktopAttentionResponse": {
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/DesktopAttentionCounts"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DesktopAttentionItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "counts",
+          "generated_at",
+          "truncated"
+        ],
+        "title": "DesktopAttentionResponse",
+        "type": "object"
+      },
+      "DesktopChangeReviewAuditRequest": {
+        "properties": {
+          "action": {
+            "enum": [
+              "stage",
+              "unstage",
+              "revert"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "approval_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Id"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "hunk_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Hunk Ids",
+            "type": "array"
+          },
+          "operation_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "path": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "phase": {
+            "enum": [
+              "requested",
+              "completed",
+              "failed"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "preview_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Preview Sha256",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          }
+        },
+        "required": [
+          "operation_id",
+          "phase",
+          "action",
+          "path",
+          "hunk_ids",
+          "preview_sha256"
+        ],
+        "title": "DesktopChangeReviewAuditRequest",
+        "type": "object"
+      },
+      "DesktopChangeReviewAuditResponse": {
+        "properties": {
+          "accepted": {
+            "title": "Accepted",
+            "type": "boolean"
+          },
+          "audit_id": {
+            "title": "Audit Id",
+            "type": "string"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "phase": {
+            "enum": [
+              "requested",
+              "completed",
+              "failed"
+            ],
+            "title": "Phase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "accepted",
+          "audit_id",
+          "operation_id",
+          "phase"
+        ],
+        "title": "DesktopChangeReviewAuditResponse",
         "type": "object"
       },
       "DesktopFeedbackRequest": {
@@ -14783,6 +15232,548 @@
         "title": "PolicySettingsResponse",
         "type": "object"
       },
+      "ProjectKnowledgeIndexActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "操作原因",
+            "title": "Reason"
+          }
+        },
+        "title": "ProjectKnowledgeIndexActionRequest",
+        "type": "object"
+      },
+      "ProjectKnowledgeIndexCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "default": "",
+            "description": "项目知识索引说明",
+            "maxLength": 1000,
+            "title": "Description",
+            "type": "string"
+          },
+          "desktop_profile_id": {
+            "description": "Desktop profile 的非路径稳定标识",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Desktop Profile Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "幂等键",
+            "title": "Idempotency Key"
+          },
+          "ignore_patterns": {
+            "description": "仅追加排除的相对 glob 规则",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Ignore Patterns",
+            "type": "array"
+          },
+          "name": {
+            "description": "项目知识索引名称",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "root_identity": {
+            "description": "由受信 Desktop 计算的 workspace root identity",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Root Identity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "desktop_profile_id",
+          "root_identity"
+        ],
+        "title": "ProjectKnowledgeIndexCreateRequest",
+        "type": "object"
+      },
+      "ProjectKnowledgeIndexPage": {
+        "properties": {
+          "items": {
+            "description": "项目知识索引列表",
+            "items": {
+              "$ref": "#/components/schemas/ProjectKnowledgeIndexResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ProjectKnowledgeIndexPage",
+        "type": "object"
+      },
+      "ProjectKnowledgeIndexResponse": {
+        "properties": {
+          "agent_id": {
+            "description": "Agent ID",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "创建时间",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "description": "项目知识索引说明",
+            "title": "Description",
+            "type": "string"
+          },
+          "desktop_profile_id": {
+            "description": "Desktop profile 稳定标识",
+            "title": "Desktop Profile Id",
+            "type": "string"
+          },
+          "error_file_count": {
+            "default": 0,
+            "description": "失败文件数",
+            "title": "Error File Count",
+            "type": "integer"
+          },
+          "file_count": {
+            "default": 0,
+            "description": "已知文件收据数",
+            "title": "File Count",
+            "type": "integer"
+          },
+          "id": {
+            "description": "项目知识索引 ID",
+            "title": "Id",
+            "type": "string"
+          },
+          "ignore_patterns": {
+            "description": "用户追加忽略规则",
+            "items": {
+              "type": "string"
+            },
+            "title": "Ignore Patterns",
+            "type": "array"
+          },
+          "indexed_file_count": {
+            "default": 0,
+            "description": "已索引文件数",
+            "title": "Indexed File Count",
+            "type": "integer"
+          },
+          "knowledge_source_id": {
+            "description": "关联 Knowledge Source ID",
+            "title": "Knowledge Source Id",
+            "type": "string"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "最后索引错误",
+            "title": "Last Error"
+          },
+          "last_snapshot_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "最后已接受扫描的开始时间，用于拒绝乱序快照",
+            "title": "Last Snapshot At"
+          },
+          "last_sync_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "最后同步时间",
+            "title": "Last Sync At"
+          },
+          "name": {
+            "description": "项目知识索引名称",
+            "title": "Name",
+            "type": "string"
+          },
+          "organization_id": {
+            "description": "组织 ID",
+            "title": "Organization Id",
+            "type": "string"
+          },
+          "root_identity": {
+            "description": "不含绝对路径的 root identity",
+            "title": "Root Identity",
+            "type": "string"
+          },
+          "snapshot_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "最后完整快照游标",
+            "title": "Snapshot Cursor"
+          },
+          "snapshot_generation": {
+            "description": "最后完整快照代次",
+            "title": "Snapshot Generation",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "ACTIVE",
+              "PAUSED",
+              "ERROR",
+              "UNBOUND"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "unbound_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "解绑时间",
+            "title": "Unbound At"
+          },
+          "updated_at": {
+            "description": "更新时间",
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "organization_id",
+          "agent_id",
+          "knowledge_source_id",
+          "desktop_profile_id",
+          "root_identity",
+          "name",
+          "description",
+          "status",
+          "ignore_patterns",
+          "snapshot_generation",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ProjectKnowledgeIndexResponse",
+        "type": "object"
+      },
+      "ProjectKnowledgeSnapshotError": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "description": "失败的相对路径",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "reason": {
+            "description": "安全错误码",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "reason"
+        ],
+        "title": "ProjectKnowledgeSnapshotError",
+        "type": "object"
+      },
+      "ProjectKnowledgeSnapshotFile": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "UTF-8 文本内容",
+            "title": "Content"
+          },
+          "content_sha256": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 64,
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "原文件 UTF-8 bytes 哈希",
+            "title": "Content Sha256"
+          },
+          "mime_type": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "MIME type",
+            "title": "Mime Type"
+          },
+          "modified_at": {
+            "description": "Desktop 观察到的修改时间",
+            "format": "date-time",
+            "title": "Modified At",
+            "type": "string"
+          },
+          "relative_path": {
+            "description": "项目内相对路径",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Relative Path",
+            "type": "string"
+          },
+          "size_bytes": {
+            "description": "文件大小",
+            "maximum": 2147483647.0,
+            "minimum": 0.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "skip_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "symlink",
+                  "file_too_large",
+                  "invalid_utf8",
+                  "changed_during_scan",
+                  "read_failed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "跳过原因",
+            "title": "Skip Reason"
+          },
+          "status": {
+            "description": "Desktop 扫描状态",
+            "enum": [
+              "ready",
+              "skipped"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "relative_path",
+          "status",
+          "size_bytes",
+          "modified_at"
+        ],
+        "title": "ProjectKnowledgeSnapshotFile",
+        "type": "object"
+      },
+      "ProjectKnowledgeSyncRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "title": "Completed At",
+            "type": "string"
+          },
+          "default_ignore_version": {
+            "const": "v1",
+            "title": "Default Ignore Version",
+            "type": "string"
+          },
+          "desktop_profile_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Desktop Profile Id",
+            "type": "string"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectKnowledgeSnapshotError"
+            },
+            "maxItems": 100,
+            "title": "Errors",
+            "type": "array"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectKnowledgeSnapshotFile"
+            },
+            "maxItems": 5000,
+            "title": "Files",
+            "type": "array"
+          },
+          "indexed_files": {
+            "maximum": 5000.0,
+            "minimum": 0.0,
+            "title": "Indexed Files",
+            "type": "integer"
+          },
+          "root_identity": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Root Identity",
+            "type": "string"
+          },
+          "scanned_files": {
+            "maximum": 5000.0,
+            "minimum": 0.0,
+            "title": "Scanned Files",
+            "type": "integer"
+          },
+          "schema_version": {
+            "enum": [
+              "desktop-project-knowledge-snapshot-v1",
+              "desktop-project-knowledge-snapshot-v2"
+            ],
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "snapshot_cursor": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Snapshot Cursor",
+            "type": "string"
+          },
+          "snapshot_generation": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Desktop Profile 持久扫描代次",
+            "title": "Snapshot Generation"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "total_bytes": {
+            "maximum": 16777216.0,
+            "minimum": 0.0,
+            "title": "Total Bytes",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "truncation_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "max_files",
+                  "max_total_bytes",
+                  "max_duration",
+                  "scan_error"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Truncation Reason"
+          }
+        },
+        "required": [
+          "schema_version",
+          "default_ignore_version",
+          "desktop_profile_id",
+          "root_identity",
+          "snapshot_cursor",
+          "complete",
+          "truncated",
+          "files",
+          "scanned_files",
+          "indexed_files",
+          "total_bytes",
+          "started_at",
+          "completed_at"
+        ],
+        "title": "ProjectKnowledgeSyncRequest",
+        "type": "object"
+      },
       "PromptAssemblyManifestResponse": {
         "properties": {
           "created_at": {
@@ -19750,9 +20741,23 @@
             "type": "string"
           },
           "entity_type": {
-            "const": "task",
+            "enum": [
+              "task",
+              "offline_agent_run"
+            ],
             "title": "Entity Type",
             "type": "string"
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Id"
           },
           "timestamp": {
             "title": "Timestamp",
@@ -23495,6 +24500,129 @@
         "title": "TraceListResponse",
         "type": "object"
       },
+      "TriggerInvocationPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TriggerInvocationResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "TriggerInvocationPage",
+        "type": "object"
+      },
+      "TriggerInvocationResponse": {
+        "properties": {
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "config_summary_json": {
+            "additionalProperties": true,
+            "title": "Config Summary Json",
+            "type": "object"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "payload_summary_json": {
+            "additionalProperties": true,
+            "title": "Payload Summary Json",
+            "type": "object"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "trigger_id": {
+            "title": "Trigger Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "trigger_id",
+          "status",
+          "attempt",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "TriggerInvocationResponse",
+        "type": "object"
+      },
       "UserInviteRequest": {
         "properties": {
           "email": {
@@ -24181,6 +25309,7 @@
           "goal": {
             "anyOf": [
               {
+                "maxLength": 4096,
                 "type": "string"
               },
               {
@@ -24199,6 +25328,7 @@
           "title": {
             "anyOf": [
               {
+                "maxLength": 256,
                 "type": "string"
               },
               {
@@ -24218,6 +25348,17 @@
             "description": "Agent ID",
             "title": "Agent Id",
             "type": "string"
+          },
+          "invocation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invocation Id"
           },
           "run_id": {
             "description": "Created Agent Run ID",
@@ -24341,6 +25482,52 @@
           "step"
         ],
         "title": "WizardTransitionRequest",
+        "type": "object"
+      },
+      "WorkspaceAuthorizationRequest": {
+        "properties": {
+          "profile_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Profile Id",
+            "type": "string"
+          },
+          "root_path": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Root Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "profile_id",
+          "root_path"
+        ],
+        "title": "WorkspaceAuthorizationRequest",
+        "type": "object"
+      },
+      "WorkspaceAuthorizationResponse": {
+        "properties": {
+          "authorization": {
+            "title": "Authorization",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "authorization",
+          "label",
+          "expires_at"
+        ],
+        "title": "WorkspaceAuthorizationResponse",
         "type": "object"
       },
       "WorkspaceContextCompressionRequest": {
@@ -24600,15 +25787,15 @@
   },
   "info": {
     "contact": {
-      "name": "Harness Platform Maintainers",
-      "url": "https://github.com/example/harness"
+      "name": "Forge Harness Maintainers",
+      "url": "https://github.com/luohao0308/forge-harness"
     },
-    "description": "AI Harness Platform - Model + Harness = Agent. This API powers Agent configuration, Workspace runs, tools, MCP, knowledge, Eval, Observability, RBAC, retention, and deployment operations.",
+    "description": "Forge Harness - Model + Harness = Agent. This API powers model configuration, Workspace runs, tools, MCP, knowledge, Eval, Observability, RBAC, retention, and deployment operations.",
     "license": {
       "name": "MIT"
     },
-    "summary": "AI Harness Platform API",
-    "title": "Harness API",
+    "summary": "Forge Harness API",
+    "title": "Forge Harness API",
     "version": "0.1.0"
   },
   "openapi": "3.1.0",
@@ -27146,6 +28333,428 @@
         ]
       }
     },
+    "/api/agents/{agent_id}/knowledge/project-indexes": {
+      "get": {
+        "operationId": "list_agent_project_knowledge_indexes_api_agents__agent_id__knowledge_project_indexes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectKnowledgeIndexPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "查询 Desktop 项目知识索引",
+        "tags": [
+          "agents"
+        ]
+      },
+      "post": {
+        "operationId": "create_agent_project_knowledge_index_api_agents__agent_id__knowledge_project_indexes_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectKnowledgeIndexCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectKnowledgeIndexResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "绑定 Desktop 项目知识索引",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/agents/{agent_id}/knowledge/project-indexes/{index_id}": {
+      "get": {
+        "operationId": "get_agent_project_knowledge_index_api_agents__agent_id__knowledge_project_indexes__index_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index_id",
+            "required": true,
+            "schema": {
+              "title": "Index Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectKnowledgeIndexResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "查询 Desktop 项目知识索引详情",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/agents/{agent_id}/knowledge/project-indexes/{index_id}/pause": {
+      "post": {
+        "operationId": "pause_agent_project_knowledge_index_api_agents__agent_id__knowledge_project_indexes__index_id__pause_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index_id",
+            "required": true,
+            "schema": {
+              "title": "Index Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectKnowledgeIndexActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectKnowledgeIndexResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "暂停 Desktop 项目知识索引",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/agents/{agent_id}/knowledge/project-indexes/{index_id}/resume": {
+      "post": {
+        "operationId": "resume_agent_project_knowledge_index_api_agents__agent_id__knowledge_project_indexes__index_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index_id",
+            "required": true,
+            "schema": {
+              "title": "Index Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectKnowledgeIndexActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectKnowledgeIndexResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "恢复 Desktop 项目知识索引",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/agents/{agent_id}/knowledge/project-indexes/{index_id}/sync": {
+      "post": {
+        "operationId": "sync_agent_project_knowledge_index_api_agents__agent_id__knowledge_project_indexes__index_id__sync_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index_id",
+            "required": true,
+            "schema": {
+              "title": "Index Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectKnowledgeSyncRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectKnowledgeIndexResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "同步 Desktop 项目知识完整快照",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/agents/{agent_id}/knowledge/project-indexes/{index_id}/unbind": {
+      "post": {
+        "operationId": "unbind_agent_project_knowledge_index_api_agents__agent_id__knowledge_project_indexes__index_id__unbind_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index_id",
+            "required": true,
+            "schema": {
+              "title": "Index Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectKnowledgeIndexActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectKnowledgeIndexResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "解绑 Desktop 项目知识索引并归档来源",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
     "/api/agents/{agent_id}/knowledge/sources": {
       "get": {
         "operationId": "list_agent_knowledge_sources_api_agents__agent_id__knowledge_sources_get",
@@ -28714,6 +30323,139 @@
         ]
       }
     },
+    "/api/agents/{agent_id}/triggers/{trigger_id}/invocations": {
+      "get": {
+        "operationId": "list_trigger_invocations_api_agents__agent_id__triggers__trigger_id__invocations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "trigger_id",
+            "required": true,
+            "schema": {
+              "title": "Trigger Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerInvocationPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Trigger Invocations",
+        "tags": [
+          "triggers"
+        ]
+      }
+    },
+    "/api/agents/{agent_id}/triggers/{trigger_id}/invocations/{invocation_id}": {
+      "get": {
+        "operationId": "get_trigger_invocation_api_agents__agent_id__triggers__trigger_id__invocations__invocation_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "trigger_id",
+            "required": true,
+            "schema": {
+              "title": "Trigger Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "invocation_id",
+            "required": true,
+            "schema": {
+              "title": "Invocation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerInvocationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Trigger Invocation",
+        "tags": [
+          "triggers"
+        ]
+      }
+    },
     "/api/agents/{agent_id}/versions": {
       "get": {
         "operationId": "list_agent_versions_api_agents__agent_id__versions_get",
@@ -30044,6 +31786,104 @@
         ]
       }
     },
+    "/api/desktop/attention": {
+      "get": {
+        "description": "Return one bounded, organization-scoped projection of actionable Desktop work.",
+        "operationId": "get_desktop_attention_api_desktop_attention_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DesktopAttentionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Desktop Attention",
+        "tags": [
+          "desktop-sync"
+        ]
+      }
+    },
+    "/api/desktop/change-review/audit": {
+      "post": {
+        "description": "Persist an organization-scoped audit record for a local Git mutation phase.",
+        "operationId": "record_desktop_change_review_audit_api_desktop_change_review_audit_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DesktopChangeReviewAuditRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DesktopChangeReviewAuditResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Record Desktop Change Review Audit",
+        "tags": [
+          "desktop-sync"
+        ]
+      }
+    },
     "/api/desktop/feedback": {
       "post": {
         "operationId": "submit_desktop_feedback_api_desktop_feedback_post",
@@ -30339,7 +32179,7 @@
     },
     "/api/desktop/updates/check": {
       "get": {
-        "description": "Check Harness Desktop update availability for stable or beta release channels.\n\nThe desktop app still downloads signed artifacts from GitHub Releases through\nelectron-updater metadata. This endpoint is the backend policy gate that\nselects the channel/version and returns the metadata feed URL for the client.",
+        "description": "Check Forge Harness Desktop update availability for stable or beta release channels.\n\nThe desktop app still downloads signed artifacts from GitHub Releases through\nelectron-updater metadata. This endpoint is the backend policy gate that\nselects the channel/version and returns the metadata feed URL for the client.",
         "operationId": "check_desktop_updates_api_desktop_updates_check_get",
         "parameters": [
           {
@@ -31989,6 +33829,65 @@
           }
         },
         "summary": "Exchange Web Bootstrap",
+        "tags": [
+          "local-runtime"
+        ]
+      }
+    },
+    "/api/local-runtime/workspace-authorization": {
+      "post": {
+        "operationId": "issue_workspace_authorization_api_local_runtime_workspace_authorization_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Harness-Desktop-Bootstrap",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Harness-Desktop-Bootstrap"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceAuthorizationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceAuthorizationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Issue Workspace Authorization",
         "tags": [
           "local-runtime"
         ]
@@ -41245,6 +43144,22 @@
                 }
               ],
               "title": "X-Harness-Trigger-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
             }
           }
         ],

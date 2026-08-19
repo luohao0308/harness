@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "types": [],
+    "noEmit": true
+  },
+  "include": [
+    "src/renderer/**/*.ts",
+    "src/services/browser-network-monitor.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "release",
+    "src/**/__tests__/**/*.ts"
+  ]
+}

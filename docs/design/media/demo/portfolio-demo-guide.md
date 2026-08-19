@@ -2,7 +2,7 @@
 
 ## Positioning
 
-This demo presents AI Harness as a Production Agent Harness Platform for creating, running, observing, constraining, recovering, and evaluating AI Agents.
+This demo presents Forge Harness as a production AI control plane for creating, running, observing, constraining, recovering, and evaluating AI Agents.
 
 ## Demo Scenario
 

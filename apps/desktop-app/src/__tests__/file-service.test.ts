@@ -25,6 +25,8 @@ describe('file bridge', () => {
   let watcherCloseMock: ReturnType<typeof vi.fn>
   let writeFileSyncMock: ReturnType<typeof vi.fn>
   let renameSyncMock: ReturnType<typeof vi.fn>
+  let activeProfileId: string
+  let profileWorkspaceRoots: Map<string, string>
   let watchCallback:
     | ((eventType: string, filename: Buffer | string | null) => void)
     | undefined
@@ -33,6 +35,8 @@ describe('file bridge', () => {
     vi.resetModules()
     watchCallback = undefined
     watcherCloseMock = vi.fn()
+    activeProfileId = 'profile-a'
+    profileWorkspaceRoots = new Map()
     mockWindow = {
       once: vi.fn(),
       webContents: {
@@ -53,6 +57,16 @@ describe('file bridge', () => {
       },
       dialog: mockDialog,
       ipcMain: mockIpcMain,
+    }))
+
+    vi.doMock('../services/phase6-store', () => ({
+      getActiveProfile: vi.fn(() => ({ id: activeProfileId })),
+      getActiveProfileWorkspaceRoot: vi.fn(() => profileWorkspaceRoots.get(activeProfileId) ?? null),
+      nextProjectKnowledgeSnapshotGeneration: vi.fn(() => 1),
+      setActiveProfileWorkspaceRoot: vi.fn((rootPath: string | null) => {
+        if (rootPath === null) profileWorkspaceRoots.delete(activeProfileId)
+        else profileWorkspaceRoots.set(activeProfileId, rootPath)
+      }),
     }))
 
     vi.doMock('fs', async () => {
@@ -83,19 +97,25 @@ describe('file bridge', () => {
     fs.writeFileSync(path.join(root, 'binary.bin'), Buffer.from([0, 1, 2, 3]))
     fs.writeFileSync(path.join(root, 'notes.txt'), 'hello world')
     fs.writeFileSync(path.join(root, 'nested', 'child.md'), '# child')
-    return root
+    return fs.realpathSync(root)
   }
 
-  async function registerHandlers() {
+  async function registerHandlers(authorizeWorkspace?: (profileId: string, rootPath: string) => Promise<{
+    authorization: string
+    label: string
+    expiresAt: string
+  }>) {
     const { registerFileHandlers } = await import('../services/file-service')
-    registerFileHandlers()
+    registerFileHandlers({ authorizeWorkspace })
     return {
       select: mockIpcMain.handle.mock.calls.find((call) => call[0] === 'file:select-workspace-root')?.[1],
+      selectAuthorized: mockIpcMain.handle.mock.calls.find((call) => call[0] === 'file:select-authorized-workspace-root')?.[1],
       get: mockIpcMain.handle.mock.calls.find((call) => call[0] === 'file:get-workspace-root')?.[1],
       set: mockIpcMain.handle.mock.calls.find((call) => call[0] === 'file:set-workspace-root')?.[1],
       start: mockIpcMain.handle.mock.calls.find((call) => call[0] === 'file:start-watch')?.[1],
       stop: mockIpcMain.handle.mock.calls.find((call) => call[0] === 'file:stop-watch')?.[1],
       list: mockIpcMain.handle.mock.calls.find((call) => call[0] === 'file:list-files')?.[1],
+      scan: mockIpcMain.handle.mock.calls.find((call) => call[0] === 'file:scan-project-knowledge')?.[1],
       read: mockIpcMain.handle.mock.calls.find((call) => call[0] === 'file:read-file')?.[1],
       write: mockIpcMain.handle.mock.calls.find((call) => call[0] === 'file:write-file')?.[1],
     }
@@ -125,9 +145,33 @@ describe('file bridge', () => {
     closedHandler?.()
 
     expect(handlers.get?.({ sender: { id: 'sender' } } as never)).toEqual({
-      rootPath: null,
+      rootPath: workspaceRoot,
       watching: false,
     })
+  })
+
+  test('returns only an opaque authorization and label for automation workspace selection', async () => {
+    const workspaceRoot = createWorkspace()
+    const authorizeWorkspace = vi.fn().mockResolvedValue({
+      authorization: 'hwa1_token.signature',
+      label: 'workspace',
+      expiresAt: '2026-08-19T12:05:00Z',
+    })
+    mockDialog.showOpenDialog.mockResolvedValue({
+      canceled: false,
+      filePaths: [workspaceRoot],
+    })
+    const handlers = await registerHandlers(authorizeWorkspace)
+
+    const selected = await handlers.selectAuthorized?.({ sender: { id: 'sender' } } as never)
+
+    expect(authorizeWorkspace).toHaveBeenCalledWith('profile-a', workspaceRoot)
+    expect(selected).toEqual({
+      authorization: 'hwa1_token.signature',
+      label: 'workspace',
+      expiresAt: '2026-08-19T12:05:00Z',
+    })
+    expect(JSON.stringify(selected)).not.toContain(workspaceRoot)
   })
 
   test('lists, reads, writes, and reports file changes within the workspace root', async () => {
@@ -220,6 +264,93 @@ describe('file bridge', () => {
     ).rejects.toThrow('workspace root must be an existing directory')
   })
 
+  test('restores workspace roots per Desktop profile and rejects symlink roots', async () => {
+    const workspaceA = createWorkspace()
+    const workspaceB = createWorkspace()
+    const rootLink = path.join(os.tmpdir(), `desktop-root-link-${Date.now()}`)
+    fs.symlinkSync(workspaceA, rootLink)
+    const handlers = await registerHandlers()
+
+    await handlers.set!({ sender: { id: 'sender' } } as never, workspaceA)
+    activeProfileId = 'profile-b'
+    expect(handlers.get?.({ sender: { id: 'sender' } } as never)).toEqual({
+      rootPath: null,
+      watching: false,
+    })
+    await handlers.set!({ sender: { id: 'sender' } } as never, workspaceB)
+
+    activeProfileId = 'profile-a'
+    expect(handlers.get?.({ sender: { id: 'sender' } } as never)).toEqual({
+      rootPath: workspaceA,
+      watching: false,
+    })
+    activeProfileId = 'profile-b'
+    expect(handlers.get?.({ sender: { id: 'sender' } } as never)).toEqual({
+      rootPath: workspaceB,
+      watching: false,
+    })
+
+    expect(() => handlers.set!({ sender: { id: 'sender' } } as never, rootLink)).toThrow(
+      'workspace root must be a non-symlink directory'
+    )
+    fs.unlinkSync(rootLink)
+  })
+
+  test('scans bounded project knowledge without exposing roots or secret content', async () => {
+    const workspaceRoot = createWorkspace()
+    fs.mkdirSync(path.join(workspaceRoot, 'node_modules'))
+    fs.writeFileSync(path.join(workspaceRoot, 'node_modules', 'package.md'), 'ignored dependency')
+    fs.writeFileSync(path.join(workspaceRoot, '.env'), 'API_KEY=secret')
+    fs.writeFileSync(path.join(workspaceRoot, 'private.pem'), 'private key')
+    fs.writeFileSync(path.join(workspaceRoot, 'invalid.md'), Buffer.from([0xff, 0xfe, 0xfd]))
+    fs.writeFileSync(path.join(workspaceRoot, 'large.ts'), 'x'.repeat(64))
+    fs.symlinkSync(path.join(workspaceRoot, 'notes.txt'), path.join(workspaceRoot, 'linked.md'))
+    const handlers = await registerHandlers()
+    await handlers.set!({ sender: { id: 'sender' } } as never, workspaceRoot)
+
+    const snapshot = await handlers.scan!({ sender: { id: 'sender' } } as never, {
+      ignorePatterns: ['nested/**'],
+      maxFileBytes: 32,
+    })
+
+    expect(snapshot).toMatchObject({
+      schemaVersion: 'desktop-project-knowledge-snapshot-v2',
+      defaultIgnoreVersion: 'v1',
+      complete: true,
+      truncated: false,
+      truncationReason: null,
+    })
+    expect(snapshot.rootIdentity).toMatch(/^[0-9a-f]{64}$/)
+    expect(snapshot.snapshotCursor).toMatch(/^[0-9a-f]{64}$/)
+    expect(snapshot).not.toHaveProperty('rootPath')
+    expect(JSON.stringify(snapshot)).not.toContain(workspaceRoot)
+
+    expect(JSON.stringify(snapshot)).not.toContain('API_KEY=secret')
+    expect(JSON.stringify(snapshot)).not.toContain('private key')
+    expect(snapshot.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({ relativePath: 'notes.txt', status: 'ready', content: 'hello world' }),
+      expect.objectContaining({ relativePath: 'large.ts', status: 'skipped', skipReason: 'file_too_large' }),
+      expect.objectContaining({ relativePath: 'invalid.md', status: 'skipped', skipReason: 'invalid_utf8' }),
+      expect.objectContaining({ relativePath: 'linked.md', status: 'skipped', skipReason: 'symlink' }),
+    ]))
+    expect(snapshot.files.map((file: { relativePath: string }) => file.relativePath)).not.toContain(
+      'nested/child.md'
+    )
+    expect(snapshot.files.map((file: { relativePath: string }) => file.relativePath)).not.toContain(
+      'node_modules/package.md'
+    )
+
+    const incomplete = await handlers.scan!({ sender: { id: 'sender' } } as never, {
+      maxFiles: 1,
+    })
+    expect(incomplete).toMatchObject({
+      complete: false,
+      truncated: true,
+      truncationReason: 'max_files',
+    })
+    expect(incomplete.snapshotCursor).not.toBe(snapshot.snapshotCursor)
+  })
+
   test('rejects symlink escapes on read, list, and write with sanitized relative errors', async () => {
     const workspaceRoot = createWorkspace()
     const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'desktop-file-outside-'))
@@ -255,7 +386,9 @@ describe('file bridge', () => {
       } catch (caught) {
         error = caught as Error
       }
-      expect(error).not.toBeNull()
+      if (!(error instanceof Error)) {
+        throw new Error('expected file operation to throw')
+      }
       expect(error.message).not.toContain(workspaceRoot)
       expect(error.message).not.toContain(outsideRoot)
     }
@@ -306,7 +439,7 @@ describe('file bridge', () => {
 
     expect(watcherCloseMock).toHaveBeenCalledTimes(2)
     expect(handlers.get?.({ sender: { id: 'sender' } } as never)).toEqual({
-      rootPath: null,
+      rootPath: workspaceRoot,
       watching: false,
     })
   })

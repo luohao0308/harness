@@ -23,6 +23,21 @@ describe('OfflineQueue', () => {
     it('should create sync_operations table', () => {
       expect(() => queue.initialize()).not.toThrow()
     })
+
+    it('recovers in-progress operations after a restart', () => {
+      const operation = queue.enqueue({
+        operation_type: 'CREATE',
+        entity_type: 'offline_agent_run',
+        entity_id: 'run-1',
+        payload_json: JSON.stringify({ run: { id: 'run-1' } }),
+        client_timestamp: new Date().toISOString(),
+      })
+      queue.markInProgress(operation.id!)
+
+      queue.initialize()
+
+      expect(queue.get(operation.id!)?.status).toBe('PENDING')
+    })
   })
 
   describe('enqueue', () => {

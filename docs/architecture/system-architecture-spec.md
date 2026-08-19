@@ -2,7 +2,7 @@
 
 ## Architecture Summary
 
-AI Harness Platform is a control plane and runtime for production Agents.
+Forge Harness is a control plane and runtime for production Agents.
 
 ```text
 Agent Studio
@@ -31,7 +31,7 @@ The Harness proves and productizes the full execution chain: Agent configuration
 
 ```mermaid
 flowchart TD
-  A["AI Harness Platform"] --> B["Product Target: Model + Harness = Agent"]
+  A["Forge Harness"] --> B["Product Target: Model + Harness = Agent"]
 
   B --> C["Agent Console"]
   B --> D["FastAPI Backend"]

@@ -211,6 +211,7 @@ async function fetchApi(path: string, init?: RequestInit) {
     try {
       return await fetch(url, { credentials: "same-origin", ...init });
     } catch (error) {
+      if (init?.signal?.aborted) throw error;
       lastError = error;
     }
   }
@@ -248,6 +249,45 @@ export type Task = {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+};
+
+export type DesktopAttentionCategory = "approvals" | "runs" | "teams";
+
+export type DesktopAttentionItem = {
+  id: string;
+  category: DesktopAttentionCategory;
+  kind:
+    | "tool_approval"
+    | "run_failed"
+    | "run_cancelled"
+    | "run_waiting"
+    | "team_goal_blocked"
+    | "team_agent_failed"
+    | "team_task_blocked";
+  severity: "critical" | "warning";
+  title: string;
+  description: string;
+  status: string;
+  occurred_at: string;
+  target_path: string;
+  task_id: string | null;
+  team_id: string | null;
+  approval_id: string | null;
+  tool_name: string | null;
+  risk_level: string | null;
+  actions: readonly ("approve" | "reject" | "open")[];
+};
+
+export type DesktopAttentionResponse = {
+  items: DesktopAttentionItem[];
+  counts: {
+    total: number;
+    approvals: number;
+    runs: number;
+    teams: number;
+  };
+  generated_at: string;
+  truncated: boolean;
 };
 
 export type AuthTokenResponse = {
@@ -2279,6 +2319,71 @@ export type KnowledgeSourcePage = {
   next_cursor: string | null;
 };
 
+export type ProjectKnowledgeIndex = {
+  id: string;
+  organization_id: string;
+  agent_id: string;
+  knowledge_source_id: string;
+  desktop_profile_id: string;
+  root_identity: string;
+  name: string;
+  description: string;
+  status: "ACTIVE" | "PAUSED" | "ERROR" | "UNBOUND";
+  ignore_patterns: string[];
+  snapshot_generation: number;
+  snapshot_cursor: string | null;
+  file_count: number;
+  indexed_file_count: number;
+  error_file_count: number;
+  last_snapshot_at: string | null;
+  last_sync_at: string | null;
+  last_error: string | null;
+  unbound_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ProjectKnowledgeIndexPage = {
+  items: ProjectKnowledgeIndex[];
+};
+
+export type ProjectKnowledgeIndexCreatePayload = {
+  name: string;
+  description?: string;
+  desktop_profile_id: string;
+  root_identity: string;
+  ignore_patterns?: string[];
+  idempotency_key?: string | null;
+};
+
+export type ProjectKnowledgeSyncPayload = {
+  schema_version: "desktop-project-knowledge-snapshot-v1" | "desktop-project-knowledge-snapshot-v2";
+  default_ignore_version: "v1";
+  desktop_profile_id: string;
+  root_identity: string;
+  snapshot_generation?: number;
+  snapshot_cursor: string;
+  complete: boolean;
+  truncated: boolean;
+  truncation_reason: "max_files" | "max_total_bytes" | "max_duration" | "scan_error" | null;
+  files: Array<{
+    relative_path: string;
+    status: "ready" | "skipped";
+    content: string | null;
+    content_sha256: string | null;
+    size_bytes: number;
+    modified_at: string;
+    mime_type: string | null;
+    skip_reason: "symlink" | "file_too_large" | "invalid_utf8" | "changed_during_scan" | "read_failed" | null;
+  }>;
+  errors: Array<{ path: string; reason: string }>;
+  scanned_files: number;
+  indexed_files: number;
+  total_bytes: number;
+  started_at: string;
+  completed_at: string;
+};
+
 export type KnowledgeRetrievalHit = {
   id: string;
   chunk_id: string | null;
@@ -2571,12 +2676,16 @@ export type ToolExecuteResult = {
 export type AgentTrigger = {
   id: string;
   agent_id: string;
-  type: "webhook";
-  endpoint_path: string;
+  type: "webhook" | "schedule" | "file" | "git";
+  name?: string | null;
+  config_json?: Record<string, unknown> | null;
+  runtime_state_json?: Record<string, unknown> | null;
+  endpoint_path: string | null;
   enabled: boolean;
   created_at: string;
   updated_at: string;
   last_triggered_at: string | null;
+  deleted_at?: string | null;
 };
 
 export type AgentTriggerPage = {
@@ -2584,18 +2693,45 @@ export type AgentTriggerPage = {
 };
 
 export type AgentTriggerCreateRequest = {
-  type?: "webhook";
+  type?: AgentTrigger["type"];
+  name?: string | null;
+  config_json?: Record<string, unknown> | null;
   endpoint_path?: string | null;
   enabled?: boolean;
 };
 
 export type AgentTriggerCreateResponse = {
   trigger: AgentTrigger;
+  secret: string | null;
+};
+
+export type WebhookAgentTriggerCreateResponse = AgentTriggerCreateResponse & {
+  trigger: AgentTrigger & { type: "webhook"; endpoint_path: string };
   secret: string;
 };
 
 export type AgentTriggerUpdateRequest = {
   enabled?: boolean | null;
+  name?: string | null;
+};
+
+export type TriggerInvocation = {
+  id: string;
+  trigger_id: string;
+  idempotency_key?: string | null;
+  config_summary_json?: Record<string, unknown> | null;
+  payload_summary_json?: Record<string, unknown> | null;
+  status: string;
+  run_id?: string | null;
+  error?: string | null;
+  attempt?: number | null;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+};
+
+export type TriggerInvocationPage = {
+  items: TriggerInvocation[];
 };
 
 export type ToolCallFilters = {
@@ -3056,21 +3192,26 @@ async function request<T>(
   init?: RequestInit & { timeoutMs?: number; skipRefresh?: boolean },
 ): Promise<T> {
   const { timeoutMs = 0, signal, headers, skipRefresh = false, ...requestInit } = init ?? {};
-  const controller =
-    timeoutMs > 0 && !signal ? new AbortController() : null;
+  const controller = timeoutMs > 0 ? new AbortController() : null;
+  const abortForExternalSignal = () => controller?.abort();
+  if (signal && controller) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", abortForExternalSignal, { once: true });
+  }
   const timeout =
     controller === null
       ? null
       : globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  const requestSignal = controller?.signal ?? signal;
   let response: Response;
   try {
     response = await fetchWithAuthRetry(path, {
       ...requestInit,
-      signal: signal ?? controller?.signal,
+      signal: requestSignal,
       headers: { "Content-Type": "application/json", ...authHeaders(), ...headers },
     }, { skipRefresh });
   } catch (error) {
-    if (controller?.signal.aborted) {
+    if (controller?.signal.aborted && !signal?.aborted) {
       throw new Error(`请求超时：API ${Math.round(timeoutMs / 1000)} 秒内未响应`);
     }
     throw error instanceof Error ? error : apiConnectionError(error, apiRequestUrls(path));
@@ -3078,6 +3219,7 @@ async function request<T>(
     if (timeout !== null) {
       globalThis.clearTimeout(timeout);
     }
+    signal?.removeEventListener("abort", abortForExternalSignal);
   }
   if (!response.ok) {
     let detail = "";
@@ -3479,6 +3621,11 @@ export async function listTasksPage(options: { cursor?: string | null; limit?: n
   return request<{ items: Task[]; next_cursor: string | null }>(
     withCursor("/api/tasks", options.cursor, options.limit),
   );
+}
+
+export async function getDesktopAttention(limit = 100) {
+  const searchParams = new URLSearchParams({ limit: String(limit) });
+  return request<DesktopAttentionResponse>(`/api/desktop/attention?${searchParams.toString()}`);
 }
 
 export async function createTask(payload: TaskCreatePayload) {
@@ -3940,6 +4087,77 @@ export async function getAgent(agentId: string) {
 
 export async function listAgentKnowledgeSources(agentId: string) {
   return request<KnowledgeSourcePage>(`/api/agents/${agentId}/knowledge/sources`);
+}
+
+export async function listAgentProjectKnowledgeIndexes(agentId: string) {
+  return request<ProjectKnowledgeIndexPage>(
+    `/api/agents/${agentId}/knowledge/project-indexes`,
+  );
+}
+
+export async function createAgentProjectKnowledgeIndex(
+  agentId: string,
+  payload: ProjectKnowledgeIndexCreatePayload,
+  signal?: AbortSignal,
+) {
+  return request<ProjectKnowledgeIndex>(
+    `/api/agents/${agentId}/knowledge/project-indexes`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+      signal,
+    },
+  );
+}
+
+export async function syncAgentProjectKnowledgeIndex(
+  agentId: string,
+  indexId: string,
+  payload: ProjectKnowledgeSyncPayload,
+  signal?: AbortSignal,
+) {
+  return request<ProjectKnowledgeIndex>(
+    `/api/agents/${agentId}/knowledge/project-indexes/${indexId}/sync`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+      timeoutMs: 30_000,
+      signal,
+    },
+  );
+}
+
+export async function pauseAgentProjectKnowledgeIndex(
+  agentId: string,
+  indexId: string,
+  payload: KnowledgeSourceActionPayload = {},
+) {
+  return request<ProjectKnowledgeIndex>(
+    `/api/agents/${agentId}/knowledge/project-indexes/${indexId}/pause`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export async function resumeAgentProjectKnowledgeIndex(
+  agentId: string,
+  indexId: string,
+  payload: KnowledgeSourceActionPayload = {},
+) {
+  return request<ProjectKnowledgeIndex>(
+    `/api/agents/${agentId}/knowledge/project-indexes/${indexId}/resume`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export async function unbindAgentProjectKnowledgeIndex(
+  agentId: string,
+  indexId: string,
+  payload: KnowledgeSourceActionPayload = {},
+) {
+  return request<ProjectKnowledgeIndex>(
+    `/api/agents/${agentId}/knowledge/project-indexes/${indexId}/unbind`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
 }
 
 export async function createAgentKnowledgeSource(
@@ -4572,11 +4790,21 @@ export async function listAgentTriggers(agentId: string) {
   return request<AgentTriggerPage>(`/api/agents/${encodeURIComponent(agentId)}/triggers`);
 }
 
+export function createAgentTrigger(
+  agentId: string,
+  payload: AgentTriggerCreateRequest & { type?: "webhook" },
+): Promise<WebhookAgentTriggerCreateResponse>;
+export function createAgentTrigger(
+  agentId: string,
+  payload: AgentTriggerCreateRequest,
+): Promise<AgentTriggerCreateResponse>;
 export async function createAgentTrigger(agentId: string, payload: AgentTriggerCreateRequest) {
   return request<AgentTriggerCreateResponse>(`/api/agents/${encodeURIComponent(agentId)}/triggers`, {
     method: "POST",
     body: JSON.stringify({
       type: payload.type ?? "webhook",
+      name: payload.name ?? null,
+      config_json: payload.config_json ?? {},
       endpoint_path: payload.endpoint_path ?? null,
       enabled: payload.enabled ?? true,
     }),
@@ -4588,7 +4816,7 @@ export async function updateAgentTrigger(
   triggerId: string,
   payload: AgentTriggerUpdateRequest,
 ) {
-  return request<AgentTrigger>(`/api/agents/${encodeURIComponent(agentId)}/triggers/${encodeURIComponent(triggerId)}`, {
+  return request<AgentTrigger & { endpoint_path: string }>(`/api/agents/${encodeURIComponent(agentId)}/triggers/${encodeURIComponent(triggerId)}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
@@ -4598,6 +4826,12 @@ export async function deleteAgentTrigger(agentId: string, triggerId: string) {
   return request<void>(`/api/agents/${encodeURIComponent(agentId)}/triggers/${encodeURIComponent(triggerId)}`, {
     method: "DELETE",
   });
+}
+
+export async function listTriggerInvocations(agentId: string, triggerId: string) {
+  return request<TriggerInvocationPage>(
+    `/api/agents/${encodeURIComponent(agentId)}/triggers/${encodeURIComponent(triggerId)}/invocations`,
+  );
 }
 
 export async function listAdapters() {

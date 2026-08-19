@@ -2,7 +2,7 @@
 
 ## Product Frame
 
-The console is an AI Harness Platform workspace, not a task management app. Its top-level navigation groups Agent construction, Agent usage, Harness management, Observability, Eval, and Infra.
+The console is the Forge Harness workspace, not a task management app. Its top-level navigation groups Agent construction, Agent usage, Harness management, Observability, Eval, and Infra.
 This document is a current reference, not a frozen component contract. Equivalent panel decomposition is acceptable if the same behavior and data coverage remain visible.
 
 ## Reference Routes

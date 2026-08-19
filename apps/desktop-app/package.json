@@ -2,8 +2,8 @@
   "name": "@harness/desktop-app",
   "version": "0.1.0",
   "private": true,
-  "description": "Harness Desktop Application - Electron wrapper for agent-console",
-  "author": "Harness Team",
+  "description": "Forge Harness Desktop - Electron workspace for Forge Harness",
+  "author": "Forge Harness Team",
   "main": "dist/main.js",
   "scripts": {
     "dev": "tsx watch src/main.ts",
@@ -19,10 +19,10 @@
     "build:linux": "npm run dist:linux",
     "check:startup-budget": "node scripts/check-startup-budget.mjs",
     "test": "vitest run",
-    "test:startup-budget": "node --test scripts/startup-budget-lib.test.mjs",
+    "test:startup-budget": "node --test scripts/startup-budget-lib.test.mjs scripts/startup-evidence-lib.test.mjs scripts/release-workflow-contract.test.mjs",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
-    "type-check": "tsc --noEmit",
+    "type-check": "tsc -p tsconfig.build.json --noEmit && tsc -p tsconfig.browser.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "package": "npm run build:main && npm run build:renderer && npm run build:runtime && electron-builder --dir",
     "start": "NO_PROXY=localhost,127.0.0.1 ELECTRON_RUN_AS_NODE= electron ."
   },

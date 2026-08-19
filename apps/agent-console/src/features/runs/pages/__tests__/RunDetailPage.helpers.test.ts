@@ -4,6 +4,7 @@ import type { AgentRunWorkspace, ToolApproval, ToolCall } from "../../../tasks/a
 import {
   mergeApprovalPage,
   optimisticApprovalDecision,
+  projectCitationEvidence,
   runDetailValueLabel,
   shortCapability,
   toolOutputSummary,
@@ -60,6 +61,26 @@ describe("RunDetailPage helpers", () => {
     expect(runDetailValueLabel("local_knowledge")).toBe("本地知识库");
     expect(runDetailValueLabel("seed_fixture_local_evidence")).toBe("演示夹具本地证据");
     expect(runDetailValueLabel("recomputable_v2")).toBe("可复算 v2");
+  });
+
+  it("accepts only safe project citation evidence", () => {
+    expect(projectCitationEvidence({
+      source_snapshot: {
+        project_uri: "project://docs/guide.md",
+        project_file_sha256: "A".repeat(64),
+        document_version: 3,
+      },
+    })).toEqual({
+      uri: "project://docs/guide.md",
+      sha256: "a".repeat(64),
+      documentVersion: 3,
+    });
+    expect(projectCitationEvidence({
+      source_snapshot: { project_uri: "project:///Users/private/guide.md" },
+    })).toBeNull();
+    expect(projectCitationEvidence({
+      source_snapshot: { project_relative_path: "../secret.txt" },
+    })).toBeNull();
   });
 
   it("optimistically updates approval and tool call state", () => {

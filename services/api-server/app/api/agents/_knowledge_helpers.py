@@ -4,6 +4,7 @@
 from .common import *
 from ._session_helpers import *
 
+
 def _knowledge_source_exists(
     *,
     session: Session,
@@ -108,8 +109,29 @@ def _active_knowledge_source_or_409(
             status_code=status.HTTP_409_CONFLICT,
             detail="Knowledge source is not active",
         )
+    _require_unmanaged_knowledge_source(session=session, source=source)
     _require_org_source_admin(source=source, principal=principal)
     return source
+
+
+def _require_unmanaged_knowledge_source(
+    *,
+    session: Session,
+    source: KnowledgeSource,
+) -> None:
+    project_index_id = session.execute(
+        select(ProjectKnowledgeIndex.id)
+        .where(ProjectKnowledgeIndex.knowledge_source_id == source.id)
+        .limit(1)
+    ).scalar_one_or_none()
+    if project_index_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Project knowledge source is managed by its project index; "
+                "use the project-index lifecycle endpoints"
+            ),
+        )
 
 
 def _require_org_source_admin(*, source: KnowledgeSource, principal: Principal) -> None:
@@ -253,6 +275,7 @@ def _transition_knowledge_source(
         agent_id=agent_id,
         source_id=source_id,
     )
+    _require_unmanaged_knowledge_source(session=session, source=source)
     _require_org_source_admin(source=source, principal=principal)
     if source.status == SOURCE_STATUS_ARCHIVED and status_value != SOURCE_STATUS_ARCHIVED:
         raise HTTPException(
@@ -293,6 +316,7 @@ def _delete_knowledge_source(
     session: Session,
     principal: Principal,
 ) -> None:
+    _require_unmanaged_knowledge_source(session=session, source=source)
     before = knowledge_source_lifecycle_snapshot(source)
     document_ids = list(
         session.execute(
@@ -326,9 +350,7 @@ def _delete_knowledge_source(
             .values(chunk_id=None)
         )
         session.execute(
-            update(RetrievalHit)
-            .where(RetrievalHit.chunk_id.in_(chunk_ids))
-            .values(chunk_id=None)
+            update(RetrievalHit).where(RetrievalHit.chunk_id.in_(chunk_ids)).values(chunk_id=None)
         )
     if document_ids:
         session.execute(
@@ -468,6 +490,7 @@ def _record_knowledge_ingestion_events(
         actor_id=principal.user_id,
     )
 
+
 def _knowledge_source_response(
     session: Session,
     source: KnowledgeSource,
@@ -570,5 +593,6 @@ def _knowledge_document_responses(
         )
         for document in documents
     ]
+
 
 __all__ = [name for name in globals() if not name.startswith("__") and name != "annotations"]

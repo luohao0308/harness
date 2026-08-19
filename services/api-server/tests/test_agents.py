@@ -38,6 +38,7 @@ from app.db.models import (
     TaskStep,
     ToolApproval,
     ToolCall,
+    TriggerInvocation,
     utc_now,
 )
 from app.events.event_store import EventStore
@@ -4357,6 +4358,81 @@ def test_agent_execute_run_rejects_non_planned_status(db_session: Session) -> No
     assert response.status_code == 409
 
 
+def test_trigger_owned_agent_execute_uses_invocation_path_without_bare_executor(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    client = TestClient(app)
+    created = client.post(
+        "/api/agents/default/triggers",
+        headers=AUTH_HEADERS,
+        json={"endpoint_path": "agent-run-execute-guard"},
+    ).json()
+    invoked = client.post(
+        "/api/webhook/trigger/agent-run-execute-guard",
+        headers={"X-Harness-Trigger-Secret": created["secret"]},
+        json={"goal": "execute through trigger receipt"},
+    ).json()
+    calls: list[str] = []
+
+    def execute_trigger_invocation(*, invocation_id: str, session: Session):
+        calls.append(invocation_id)
+        invocation = session.get(TriggerInvocation, invocation_id)
+        assert invocation is not None
+        invocation.status = "SUCCEEDED"
+        return invocation
+
+    def bare_executor(*_args, **_kwargs):
+        raise AssertionError("Trigger-owned Run must not use bare Executor")
+
+    monkeypatch.setattr(
+        "app.triggers.service.execute_trigger_invocation",
+        execute_trigger_invocation,
+    )
+    monkeypatch.setattr("app.api.agents.agent_runs.Executor", bare_executor)
+
+    response = client.post(
+        f"/api/agents/runs/{invoked['run_id']}/execute",
+        headers=AUTH_HEADERS,
+    )
+
+    assert response.status_code == 202
+    assert calls == [invoked["invocation_id"]]
+    assert response.json()["id"] == invoked["run_id"]
+
+
+def test_trigger_owned_run_rejects_step_selective_resume(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    created = client.post(
+        "/api/agents/default/triggers",
+        headers=AUTH_HEADERS,
+        json={"endpoint_path": "step-resume-guard"},
+    ).json()
+    invoked = client.post(
+        "/api/webhook/trigger/step-resume-guard",
+        headers={"X-Harness-Trigger-Secret": created["secret"]},
+        json={},
+    ).json()
+    task = db_session.get(Task, invoked["run_id"])
+    invocation = db_session.get(TriggerInvocation, invoked["invocation_id"])
+    assert task is not None
+    assert invocation is not None
+    task.status = "FAILED"
+    invocation.status = "FAILED"
+    db_session.commit()
+
+    response = client.post(
+        f"/api/tasks/{task.id}/steps/resume",
+        headers=AUTH_HEADERS,
+        json={"step_keys": ["first-step"]},
+    )
+
+    assert response.status_code == 409
+    assert "step-selective resume is unavailable" in response.json()["detail"]
+
+
 def test_agent_run_workspace_merges_plan_step_state(db_session: Session) -> None:
     run = Task(
         organization_id="dev-org",
@@ -4602,6 +4678,30 @@ def test_agent_orchestrate_run_creates_named_assignments_and_events(
     listed = client.get(f"/api/agents/runs/{run_id}/assignments", headers=AUTH_HEADERS)
     assert listed.status_code == 200
     assert len(listed.json()) == len(payload["assignments"])
+
+
+def test_trigger_run_cannot_bypass_invocation_with_orchestration_endpoints(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    created = client.post(
+        "/api/agents/default/triggers",
+        headers=AUTH_HEADERS,
+        json={"endpoint_path": "orchestration-guard"},
+    )
+    assert created.status_code == 201
+    invoked = client.post(
+        "/api/webhook/trigger/orchestration-guard",
+        headers={"X-Harness-Trigger-Secret": created.json()["secret"]},
+        json={"goal": "Run through the trigger boundary"},
+    )
+    assert invoked.status_code == 200
+    run_id = invoked.json()["run_id"]
+
+    for suffix in ("orchestrate", "orchestrate/execute", "orchestrate/enqueue"):
+        response = client.post(f"/api/agents/runs/{run_id}/{suffix}", headers=AUTH_HEADERS)
+        assert response.status_code == 409
+        assert "through its invocation" in response.json()["detail"]
 
 
 def test_agent_orchestrate_uses_llm_router_when_model_returns_valid_decision(

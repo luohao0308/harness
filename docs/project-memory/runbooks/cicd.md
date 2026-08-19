@@ -38,7 +38,7 @@ It also packages `deploy/helm/harness` and boots `compose.ci.yml` for a health s
 
 `release.yml` runs on `v*.*.*` tags after verifying the tag is reachable from
 `origin/main`. It builds tagged API and Console images, packages the Helm chart,
-and builds Harness Desktop installers on macOS, Windows, and Linux.
+and builds Forge Harness Desktop installers on macOS, Windows, and Linux.
 
 Desktop release jobs build the Agent Console renderer first, run focused desktop
 tests for `electron-updater`, Sentry crash reporting, main-process startup
@@ -53,12 +53,16 @@ ordering, telemetry, and startup-budget aggregation, then package:
 
 After packaging, every platform launches its host-architecture executable with
 a fresh profile five times. Linux uses Xvfb. A malformed/unpackaged/wrong-arch
-report or any P95 budget violation fails `desktop-build`, which prevents the
-GitHub Release job from running.
+report or any P95 budget violation fails `desktop-build`. A separate
+`desktop-startup-evidence` job then downloads the three artifacts without
+merging them, requires one five-sample report for each expected platform and
+architecture, recomputes aggregate fields, and emits
+`desktop-startup-evidence.json`. GitHub Release depends on both gates.
 
 Tags containing `-beta.` are published as GitHub prereleases and use the desktop
 beta update channel. Other tags use the stable channel. The GitHub Release
-contains Helm artifacts plus all desktop installers and updater metadata.
+contains Helm artifacts, all desktop installers and updater metadata, the three
+raw startup reports, and the independent startup evidence summary.
 
 Required desktop release secrets:
 

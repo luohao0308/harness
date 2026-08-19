@@ -134,8 +134,21 @@ type DesktopApi = {
     listTasks?: () => Promise<{ items: DesktopOfflineTask[] }>;
     promoteResultToPendingAgentTask?: (offlineTaskId: string) => Promise<{ taskId: string; operationId: number | null }>;
   };
+  offlineAgent?: {
+    run?: (input: {
+      prompt: string;
+      useLocalModel?: boolean;
+      toolRequest?: { name: "workspace.list_files" | "workspace.read_text" | "workspace.write_text"; input: Record<string, unknown> } | null;
+    }) => Promise<DesktopOfflineAgentRun>;
+    listRuns?: (limit?: number) => Promise<{ items: DesktopOfflineAgentRun[] }>;
+    getRun?: (runId: string) => Promise<{ approvals: Array<{ status: string; reason: string; decision?: Record<string, unknown>; target?: { path?: string; exists?: boolean; sha256?: string | null; mtimeMs?: number | null; sizeBytes?: number | null }; proposal?: { sha256?: string; sizeBytes?: number } }> }>;
+    cancel?: (runId: string) => Promise<DesktopOfflineAgentRun>;
+    resume?: (runId: string) => Promise<DesktopOfflineAgentRun>;
+    decideApproval?: (approvalId: string, approved: boolean) => Promise<DesktopOfflineAgentRun>;
+  };
   sync?: {
     getStatus?: () => Promise<DesktopSyncRuntimeStatus>;
+    getConflicts?: () => Promise<DesktopSyncConflictSummary>;
     runNow?: () => Promise<DesktopSyncRuntimeStatus>;
     onStatus?: (callback: (status: DesktopSyncRuntimeStatus) => void) => () => void;
   };
@@ -156,6 +169,7 @@ type DesktopApi = {
   };
   file?: {
     selectWorkspaceRoot?: () => Promise<DesktopFileWatchState | null>;
+    selectAuthorizedWorkspaceRoot?: () => Promise<DesktopWorkspaceAuthorization | null>;
     getWorkspaceRoot?: () => Promise<DesktopFileWatchState>;
     setWorkspaceRoot?: (rootPath: string | null) => Promise<DesktopFileWatchState>;
     startWatch?: () => Promise<DesktopFileWatchState>;
@@ -165,9 +179,17 @@ type DesktopApi = {
       maxDepth?: number;
       maxEntries?: number;
     }) => Promise<DesktopFileListResult>;
+    scanProjectKnowledge?: (
+      options?: DesktopProjectKnowledgeScanOptions,
+    ) => Promise<DesktopProjectKnowledgeSnapshot>;
     readFile?: (path: string) => Promise<DesktopFileReadResult>;
     writeFile?: (path: string, content: string) => Promise<DesktopFileWriteResult>;
     onChange?: (callback: (event: DesktopFileChangeEvent) => void) => (() => void);
+  };
+  changeReview?: {
+    getStatus?: () => Promise<DesktopChangeReviewStatus>;
+    getDiff?: (path: string) => Promise<DesktopChangeDiff>;
+    mutate?: (input: DesktopChangeMutationInput) => Promise<DesktopChangeMutationResult>;
   };
 };
 
@@ -241,6 +263,27 @@ type DesktopOfflineTask = {
   durationMs?: number;
 };
 
+type DesktopOfflineAgentStatus = "PENDING" | "RUNNING" | "WAITING_APPROVAL" | "INTERRUPTED" | "COMPLETED" | "FAILED" | "CANCELLED";
+type DesktopOfflineAgentRun = {
+  id: string;
+  prompt: string;
+  result: string | null;
+  status: DesktopOfflineAgentStatus;
+  modelSource: "deterministic-local" | "local-model" | null;
+  modelProvider: string;
+  modelName: string;
+  modelRequested: boolean;
+  fallbackReason: string | null;
+  errorMessage: string | null;
+  toolRequest: { name: "workspace.list_files" | "workspace.read_text" | "workspace.write_text"; input: Record<string, unknown> } | null;
+  pendingApprovalId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  syncRevision: number;
+};
+
 type DesktopSyncRuntimeStatus = {
   state: "idle" | "scheduled" | "syncing" | "error" | "closed";
   profileId: string | null;
@@ -255,6 +298,22 @@ type DesktopSyncRuntimeStatus = {
   pendingOperations: number;
   retryableOperations: number;
   conflictCount: number;
+};
+
+type DesktopSyncConflictSummary = {
+  tasks: Array<{
+    id: string;
+    title: string;
+    status?: string;
+    updated_at?: string;
+    conflict_detected: boolean;
+  }>;
+  serverConflicts: Array<{
+    entity_id: string;
+    entity_type: string;
+    server_version: Record<string, unknown>;
+    client_version: Record<string, unknown>;
+  }>;
 };
 
 type DesktopFileEntry = {
@@ -296,10 +355,123 @@ type DesktopFileWatchState = {
   watching: boolean;
 };
 
+type DesktopWorkspaceAuthorization = {
+  authorization: string;
+  label: string;
+  expiresAt: string;
+};
+
 type DesktopFileListResult = {
   rootPath: string | null;
   entries: DesktopFileEntry[];
   truncated: boolean;
+};
+
+type DesktopProjectKnowledgeScanOptions = {
+  ignorePatterns?: string[];
+  maxFiles?: number;
+  maxFileBytes?: number;
+  maxTotalBytes?: number;
+  maxDurationMs?: number;
+};
+
+type DesktopProjectKnowledgeSnapshot = {
+  schemaVersion: "desktop-project-knowledge-snapshot-v1" | "desktop-project-knowledge-snapshot-v2";
+  defaultIgnoreVersion: "v1";
+  rootIdentity: string;
+  snapshotGeneration?: number;
+  snapshotCursor: string;
+  complete: boolean;
+  truncated: boolean;
+  truncationReason: "max_files" | "max_total_bytes" | "max_duration" | "scan_error" | null;
+  files: Array<{
+    relativePath: string;
+    status: "ready" | "skipped";
+    content: string | null;
+    contentSha256: string | null;
+    sizeBytes: number;
+    modifiedAt: string;
+    mimeType: string | null;
+    skipReason: "symlink" | "file_too_large" | "invalid_utf8" | "changed_during_scan" | "read_failed" | null;
+  }>;
+  errors: Array<{ path: string; reason: string }>;
+  scannedFiles: number;
+  indexedFiles: number;
+  totalBytes: number;
+  startedAt: string;
+  completedAt: string;
+};
+
+type DesktopChangeFile = {
+  path: string;
+  previousPath: string | null;
+  indexStatus: string;
+  worktreeStatus: string;
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
+  conflicted: boolean;
+};
+
+type DesktopChangeReviewStatus = {
+  state: "ready" | "no-workspace" | "not-repository" | "git-unavailable" | "error";
+  rootPath: string | null;
+  repositoryRoot: string | null;
+  branch: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  files: DesktopChangeFile[];
+  errorCode: string | null;
+  message: string | null;
+};
+
+type DesktopChangeDiffHunk = {
+  id: string;
+  header: string;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: string[];
+};
+
+type DesktopChangeDiffSection = {
+  mode: "staged" | "worktree";
+  kind: "text" | "binary" | "conflict" | "empty" | "too-large";
+  headerLines: string[];
+  hunks: DesktopChangeDiffHunk[];
+  canStage: boolean;
+  canUnstage: boolean;
+  canRevert: boolean;
+  message: string | null;
+};
+
+type DesktopChangeDiff = {
+  path: string;
+  previewToken: string;
+  expiresAt: string;
+  sections: DesktopChangeDiffSection[];
+};
+
+type DesktopChangeMutationInput = {
+  action: "stage" | "unstage" | "revert";
+  previewToken: string;
+  hunkIds: string[];
+  auditContext?: {
+    taskId?: string;
+    runId?: string;
+    approvalId?: string;
+  };
+};
+
+type DesktopChangeMutationResult = {
+  action: "stage" | "unstage" | "revert";
+  path: string;
+  status: "completed";
+  updatedAt: string;
+  auditId: string;
+  eventId: string | null;
 };
 
 interface Window {

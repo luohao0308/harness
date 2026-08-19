@@ -126,17 +126,17 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="Harness API",
+    title="Forge Harness API",
     version="0.1.0",
-    summary="AI Harness Platform API",
+    summary="Forge Harness API",
     description=(
-        "AI Harness Platform - Model + Harness = Agent. "
-        "This API powers Agent configuration, Workspace runs, tools, MCP, knowledge, "
+        "Forge Harness - Model + Harness = Agent. "
+        "This API powers model configuration, Workspace runs, tools, MCP, knowledge, "
         "Eval, Observability, RBAC, retention, and deployment operations."
     ),
     contact={
-        "name": "Harness Platform Maintainers",
-        "url": "https://github.com/example/harness",
+        "name": "Forge Harness Maintainers",
+        "url": "https://github.com/luohao0308/forge-harness",
     },
     license_info={"name": "MIT"},
     openapi_tags=[

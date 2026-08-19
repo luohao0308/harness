@@ -313,6 +313,30 @@ class RuntimeJobRepository:
         self.session.flush()
         return True
 
+    def defer(
+        self,
+        claim: ClaimedRuntimeJob,
+        *,
+        reason: str,
+        delay_seconds: float,
+        now: datetime | None = None,
+    ) -> bool:
+        deferred_at = now or utc_now()
+        job = self.session.execute(
+            select(RuntimeJob).where(*self._lease_fence(claim))
+        ).scalar_one_or_none()
+        if job is None:
+            return False
+        job.status = "queued"
+        job.attempt = max(0, job.attempt - 1)
+        job.available_at = deferred_at + timedelta(seconds=max(0.0, delay_seconds))
+        job.error = reason[:4000]
+        job.lease_owner = None
+        job.lease_until = None
+        job.updated_at = deferred_at
+        self.session.flush()
+        return True
+
     @staticmethod
     def _lease_fence(claim: ClaimedRuntimeJob) -> tuple[Any, ...]:
         return (

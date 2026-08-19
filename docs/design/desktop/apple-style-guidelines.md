@@ -2,7 +2,7 @@
 
 ## Intent
 
-"Apple style" for Harness Desktop means native-feeling restraint, not imitation
+"Apple style" for Forge Harness Desktop means native-feeling restraint, not imitation
 of Apple branding. The desktop app should feel calm, direct, spatially clear,
 keyboard-friendly, privacy-aware, and consistent with macOS expectations while
 still using the existing Harness visual system.
@@ -61,7 +61,7 @@ into the concrete rules below.
 - The main window opens to the Console route and can route to `/desktop`.
 - Independent Run windows open one Run per profile/run key and restore bounds.
 - Reopening an existing Run focuses it instead of duplicating it.
-- Window titles should identify either `Harness Desktop` or the Run being shown.
+- Window titles should identify either `Forge Harness Desktop` or the Run being shown.
 - Empty or invalid deep-link routes normalize to `/`.
 
 ### Workbench Layout

@@ -69,6 +69,7 @@ from app.observability.metrics import (
 from app.sandbox.docker_manager import DockerManager
 from app.security.auth import Principal, require_role
 from app.tools.capabilities import CapabilityRegistry, redact_secrets, stable_json_sha256
+from app.tools.registry import ToolRegistry
 from app.tools.runner import ToolRunner
 
 RUN_COMPATIBILITY_DESCRIPTION = (
@@ -112,6 +113,39 @@ def get_owned_task(task_id: str, session: Session, organization_id: str) -> Task
 
 def _is_sqlite_lock_error(exc: OperationalError) -> bool:
     return "database is locked" in str(exc).lower() or "database is busy" in str(exc).lower()
+
+
+def _executor_for_task(*, task: Task, session: Session) -> Executor:
+    executor = Executor(session)
+    workspace_root = _workspace_for_task(task=task, session=session)
+    executor.workspace_access_enabled = workspace_root is not None
+    if workspace_root is not None:
+        executor.workspace_root = workspace_root
+    return executor
+
+
+def _workspace_for_task(*, task: Task, session: Session) -> Path | None:
+    from app.triggers.service import (
+        TriggerInvocationRejected,
+        trigger_workspace_context_for_run,
+    )
+
+    try:
+        is_trigger_run, workspace_root = trigger_workspace_context_for_run(
+            run_id=task.id,
+            session=session,
+        )
+    except TriggerInvocationRejected as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if is_trigger_run:
+        return workspace_root
+    return Path(__file__).resolve().parents[2]
+
+
+def _sync_trigger_invocation_for_task(*, task: Task, session: Session) -> None:
+    from app.triggers.service import sync_trigger_invocation_from_run
+
+    sync_trigger_invocation_from_run(run_id=task.id, session=session)
 
 
 @router.post(
@@ -270,6 +304,7 @@ def cancel_task(task_id: str, session: DbSession, principal: Principal) -> Task:
                 actor_type="user",
                 actor_id=principal.user_id,
             )
+            _sync_trigger_invocation_for_task(task=task, session=session)
             session.commit()
             session.refresh(task)
             return task
@@ -470,6 +505,39 @@ def resume_task(task_id: str, session: DbSession, principal: Principal) -> Task:
     if task.status not in {"FAILED", "CANCELLED"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="任务无法恢复")
 
+    from app.triggers.service import (
+        TriggerInvocationLeaseBusy,
+        TriggerInvocationRejected,
+        resume_trigger_invocation,
+        trigger_invocation_for_run,
+    )
+
+    invocation = trigger_invocation_for_run(run_id=task.id, session=session)
+    if invocation is not None:
+        EventStore(session).append(
+            task_id=task.id,
+            event_type=EventType.TASK_RESUMED,
+            payload_json={"task_id": task.id, "resumed_by": principal.user_id},
+            actor_type="user",
+            actor_id=principal.user_id,
+        )
+        agent_task_resume_total.inc()
+        try:
+            resume_trigger_invocation(invocation_id=invocation.id, session=session)
+        except TriggerInvocationLeaseBusy as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Trigger invocation is already executing; "
+                    f"retry in {exc.retry_after_seconds:.1f}s"
+                ),
+            ) from exc
+        except (TriggerInvocationRejected, ValueError) as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        session.commit()
+        session.refresh(task)
+        return task
+
     task.status = "RUNNING"
     task.updated_at = utc_now()
     task.completed_at = None
@@ -481,7 +549,8 @@ def resume_task(task_id: str, session: DbSession, principal: Principal) -> Task:
         actor_id=principal.user_id,
     )
     agent_task_resume_total.inc()
-    resumed = Executor(session).resume_task(task)
+    resumed = _executor_for_task(task=task, session=session).resume_task(task)
+    _sync_trigger_invocation_for_task(task=resumed, session=session)
     session.commit()
     session.refresh(resumed)
     return resumed
@@ -506,6 +575,16 @@ def resume_task_steps(
     task = get_owned_task(task_id, session, principal.organization_id)
     if task.status not in {"FAILED", "CANCELLED"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="任务步骤无法续跑")
+    from app.triggers.service import trigger_invocation_for_run
+
+    if trigger_invocation_for_run(run_id=task.id, session=session) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Trigger Run must be resumed through its invocation; "
+                "step-selective resume is unavailable"
+            ),
+        )
     plan = _latest_plan(task_id=task_id, session=session)
     if plan is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="执行计划未找到")
@@ -538,11 +617,12 @@ def resume_task_steps(
         actor_id=principal.user_id,
     )
     agent_task_resume_total.inc()
-    outcome = Executor(session).resume_steps(
+    outcome = _executor_for_task(task=task, session=session).resume_steps(
         task,
         step_keys=requested_step_keys,
         resume_mode=request.resume_mode,
     )
+    _sync_trigger_invocation_for_task(task=outcome.task, session=session)
     session.commit()
     session.refresh(outcome.task)
     return StepResumeResponse(
@@ -873,16 +953,24 @@ def execute_task_tool(
     principal: Principal,
 ) -> ToolExecuteResponse:
     task = get_owned_task(task_id, session, principal.organization_id)
-    workspace_root = Path(__file__).resolve().parents[2]
+    workspace_root = _workspace_for_task(task=task, session=session)
+    if workspace_root is None and (
+        request.create_sandbox or _tool_name_requires_workspace(request.tool_name)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Trigger Run has no bound workspace for this tool",
+        )
+    execution_root = workspace_root or Path(__file__).resolve().parents[2]
     sandbox = _resolve_tool_sandbox(
         task=task,
         request=request,
         session=session,
-        workspace_root=workspace_root,
+        workspace_root=execution_root,
     )
     execution = ToolRunner(
         session=session,
-        workspace_root=workspace_root,
+        workspace_root=execution_root,
         agent_id=task.agent_id or "__missing_agent__",
     ).execute(
         task_id=task.id,
@@ -1078,6 +1166,14 @@ def _decide_tool_approval(
             local_tool_request=local_tool_request,
             session=session,
         )
+    approved_workspace_root: Path | None = None
+    if decision == "APPROVED":
+        approved_workspace_root = _workspace_for_task(task=task, session=session)
+        if approved_workspace_root is None and _tool_call_requires_workspace(tool_call):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Trigger Run has no bound workspace for this tool",
+            )
     if modified_input_json is not None:
         if local_tool_request is not None:
             _validate_local_agent_approval_modify(
@@ -1139,6 +1235,7 @@ def _decide_tool_approval(
             session=session,
             principal=principal,
         )
+        _sync_trigger_invocation_for_task(task=task, session=session)
         session.commit()
         approvals = list(
             session.execute(
@@ -1153,6 +1250,7 @@ def _decide_tool_approval(
             task=task,
             tool_call=tool_call,
             approval=approval,
+            workspace_root=approved_workspace_root,
             session=session,
             principal=principal,
         )
@@ -1165,6 +1263,7 @@ def _decide_tool_approval(
             session=session,
             principal=principal,
         )
+    _sync_trigger_invocation_for_task(task=task, session=session)
     session.commit()
     approvals = list(
         session.execute(
@@ -1719,17 +1818,37 @@ def _decide_local_agent_tool_request(
     session.flush()
 
 
+def _tool_call_requires_workspace(tool_call: ToolCall) -> bool:
+    return _tool_name_requires_workspace(
+        tool_call.tool_name,
+        requires_sandbox=bool(tool_call.requires_sandbox),
+    )
+
+
+def _tool_name_requires_workspace(
+    tool_name: str,
+    *,
+    requires_sandbox: bool = False,
+) -> bool:
+    metadata = ToolRegistry.default().tools.get(tool_name)
+    return requires_sandbox or (
+        metadata is not None and metadata.category in {"filesystem", "shell", "git"}
+    )
+
+
 def _execute_approved_tool_call(
     *,
     task: Task,
     tool_call: ToolCall,
     approval: ToolApproval,
+    workspace_root: Path | None,
     session: Session,
     principal,
 ) -> None:
     sandbox = None
-    workspace_root = Path(__file__).resolve().parents[2]
     if tool_call.requires_sandbox and task.enable_sandbox:
+        if workspace_root is None:
+            raise RuntimeError("Approved sandbox tool requires a bound workspace")
         sandbox = DockerManager().create_sandbox(
             session=session,
             task_id=task.id,
@@ -1738,7 +1857,7 @@ def _execute_approved_tool_call(
         session.flush()
     execution = ToolRunner(
         session=session,
-        workspace_root=workspace_root,
+        workspace_root=workspace_root or Path(__file__).resolve().parents[2],
         agent_id=task.agent_id,
         capability_registry=CapabilityRegistry(session, task.organization_id),
     ).execute_approved_call(tool_call=tool_call, sandbox=sandbox)
@@ -1870,7 +1989,26 @@ def _advance_task_after_tool_approval(
             actor_type="user",
             actor_id=principal.user_id,
         )
-        Executor(session).resume_task(task)
+        from app.triggers.service import (
+            TriggerInvocationLeaseBusy,
+            execute_trigger_invocation,
+            trigger_invocation_for_run,
+        )
+
+        invocation = trigger_invocation_for_run(run_id=task.id, session=session)
+        if invocation is not None:
+            try:
+                execute_trigger_invocation(invocation_id=invocation.id, session=session)
+            except TriggerInvocationLeaseBusy as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Trigger invocation is already executing; "
+                        f"retry in {exc.retry_after_seconds:.1f}s"
+                    ),
+                ) from exc
+        else:
+            _executor_for_task(task=task, session=session).resume_task(task)
         session.flush()
         return
 

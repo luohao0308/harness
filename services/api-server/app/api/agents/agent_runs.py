@@ -354,6 +354,27 @@ def execute_agent_run(
             status_code=status.HTTP_409_CONFLICT,
             detail="只有 PLANNED 状态的 Agent Run 可以确认执行",
         )
+    from app.triggers.service import (
+        TriggerInvocationLeaseBusy,
+        execute_trigger_invocation,
+        trigger_invocation_for_run,
+    )
+
+    invocation = trigger_invocation_for_run(run_id=task.id, session=session)
+    if invocation is not None:
+        try:
+            execute_trigger_invocation(invocation_id=invocation.id, session=session)
+        except TriggerInvocationLeaseBusy as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Trigger invocation is already executing; "
+                    f"retry in {exc.retry_after_seconds:.1f}s"
+                ),
+            ) from exc
+        session.commit()
+        session.refresh(task)
+        return task
     try:
         executed = Executor(session).execute_existing_plan(task)
     except (ValueError, ValidationError) as exc:
@@ -378,6 +399,16 @@ def orchestrate_agent_run(
     require_role(principal, {"admin", "engineer"})
     ensure_default_agents(session, principal.organization_id)
     run = _owned_run(run_id=run_id, session=session, principal=principal)
+    from app.triggers.service import trigger_invocation_for_run
+
+    if trigger_invocation_for_run(run_id=run.id, session=session) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Trigger Run must be executed through its invocation; "
+                "orchestration is unavailable"
+            ),
+        )
     if _latest_plan(run_id=run.id, session=session) is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Agent Run 尚未规划")
     orchestrator = MultiAgentOrchestrator(session)
@@ -413,6 +444,16 @@ def execute_agent_orchestration(
     require_role(principal, {"admin", "engineer"})
     ensure_default_agents(session, principal.organization_id)
     run = _owned_run(run_id=run_id, session=session, principal=principal)
+    from app.triggers.service import trigger_invocation_for_run
+
+    if trigger_invocation_for_run(run_id=run.id, session=session) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Trigger Run must be executed through its invocation; "
+                "orchestration is unavailable"
+            ),
+        )
     if _latest_plan(run_id=run.id, session=session) is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Agent Run 尚未规划")
     orchestrator = MultiAgentOrchestrator(session)
@@ -445,6 +486,16 @@ def enqueue_agent_orchestration(
     require_role(principal, {"admin", "engineer"})
     ensure_default_agents(session, principal.organization_id)
     run = _owned_run(run_id=run_id, session=session, principal=principal)
+    from app.triggers.service import trigger_invocation_for_run
+
+    if trigger_invocation_for_run(run_id=run.id, session=session) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Trigger Run must be executed through its invocation; "
+                "orchestration is unavailable"
+            ),
+        )
     if _latest_plan(run_id=run.id, session=session) is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Agent Run 尚未规划")
     orchestrator = MultiAgentOrchestrator(session)

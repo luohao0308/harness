@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This specification covers four interconnected capabilities for the AI Harness Platform (Model + Harness = Agent), advancing the platform from Stage 07 (private-deployable-harness-chain) into full multi-step execution, eval regression, broader e2e coverage, and improved workspace context management. Together these features close the gap between "Planner generates a plan" and "Executor actually runs the full DAG with real tool calls, sandbox isolation, and subagent delegation per step."
+This specification covers four interconnected capabilities for Forge Harness (Model + Harness = Agent), advancing the platform from Stage 07 (private-deployable-harness-chain) into full multi-step execution, eval regression, broader e2e coverage, and improved workspace context management. Together these features close the gap between "Planner generates a plan" and "Executor actually runs the full DAG with real tool calls, sandbox isolation, and subagent delegation per step."
 
 ## Resolved Design Decisions
 

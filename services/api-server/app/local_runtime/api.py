@@ -4,6 +4,7 @@ import hmac
 import json
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
@@ -18,6 +19,7 @@ from app.db.models import User
 from app.db.session import get_db_session
 from app.local_runtime.bootstrap import validate_model_base_url, validate_model_id
 from app.local_runtime.web_bootstrap import WEB_BOOTSTRAP_STORE
+from app.local_runtime.workspace_authorization import WORKSPACE_AUTHORIZATION_STORE
 from app.security.jwt_utils import issue_access_token
 
 LOCAL_SESSION_COOKIE = "harness_local_session"
@@ -63,6 +65,17 @@ class WebBootstrapIssueResponse(BaseModel):
 
 class WebBootstrapExchangeRequest(BaseModel):
     token: str = Field(min_length=1, max_length=1024)
+
+
+class WorkspaceAuthorizationRequest(BaseModel):
+    profile_id: str = Field(min_length=1, max_length=128)
+    root_path: str = Field(min_length=1, max_length=4096)
+
+
+class WorkspaceAuthorizationResponse(BaseModel):
+    authorization: str
+    label: str
+    expires_at: datetime
 
 
 class LocalModelStateResponse(BaseModel):
@@ -112,6 +125,45 @@ def create_desktop_session(
     settings = _require_desktop_bootstrap(bootstrap_token)
     _local_user(session)
     _set_local_session_cookie(response, settings=settings, session=session)
+
+
+@router.post("/workspace-authorization", response_model=WorkspaceAuthorizationResponse)
+def issue_workspace_authorization(
+    payload: WorkspaceAuthorizationRequest,
+    session: DbSession,
+    bootstrap_token: Annotated[str | None, Header(alias="X-Harness-Desktop-Bootstrap")] = None,
+) -> WorkspaceAuthorizationResponse:
+    settings = _require_desktop_bootstrap(bootstrap_token)
+    candidate = Path(payload.root_path).expanduser()
+    try:
+        if candidate.is_symlink():
+            raise OSError("symlink workspace roots are not allowed")
+        root_path = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Workspace root must be an existing non-symlink directory",
+        ) from exc
+    if not root_path.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Workspace root must be an existing non-symlink directory",
+        )
+    user, organization, _membership = resolve_local_principal(session)
+    token, expires_at = WORKSPACE_AUTHORIZATION_STORE.issue(
+        signing_secret=settings.local_desktop_bootstrap_token,
+        user_id=user.id,
+        organization_id=organization.id,
+        profile_id=payload.profile_id,
+        root_path=root_path,
+        label=root_path.name or "workspace",
+        ttl_seconds=300,
+    )
+    return WorkspaceAuthorizationResponse(
+        authorization=token,
+        label=root_path.name or "workspace",
+        expires_at=expires_at,
+    )
 
 
 @router.put("/model-key")
